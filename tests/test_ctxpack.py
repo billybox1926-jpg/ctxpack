@@ -2032,6 +2032,7 @@ class TestTokenBudgetBoundaries:
         assert is_incomplete is False
 
     # === File exactly at remaining budget ===
+    def test_file_exactly_at_remaining_budget(self):
         """A file that fits exactly is kept whole."""
         inventory = [
             {
