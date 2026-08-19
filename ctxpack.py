@@ -371,7 +371,7 @@ def read_text_file(path: Path) -> str | None:
             return None
         with path.open("r", encoding="utf-8", errors="replace") as f:
             return f.read()
-    except Exception as e:
+    except OSError as e:
         return f"[Error reading file: {e}]"
 
 
@@ -588,53 +588,36 @@ def print_summary(inventory: list[dict], original_inventory: list[dict], budget:
 def cmd_init(args):
     """Create default .ctxignore and ctxpack.json if missing."""
     root = Path.cwd()
-    default_ignore = "\n".join(
-        [
-            "# ctxpack ignore patterns (gitignore-style)",
-            ".git/",
-            ".svn/",
-            ".hg/",
-            "__pycache__/",
-            "*.pyc",
-            "*.pyo",
-            "node_modules/",
-            "venv/",
-            ".venv/",
-            "dist/",
-            "build/",
-            ".ruff_cache/",
-            ".pytest_cache/",
-            ".mypy_cache/",
-            ".tox/",
-            ".eggs/",
-            "htmlcov/",
-            ".coverage",
-            "*.log",
-            "*.lock",
-            "package-lock.json",
-            ".DS_Store",
-            "Thumbs.db",
-            "ctxpack.context.json",
-            "ctxpack.context.md",
-            "# Secret-safe defaults (credentials never reach the pack)",
-            ".env",
-            ".env.*",
-            "!.env.example",
-            "*.pem",
-            "*.key",
-            "*.p12",
-            "*.pfx",
-            "*.crt",
-            "*.cer",
-            "*.gpg",
-            "*.asc",
-            "**/.aws/**",
-            "**/.ssh/**",
-            "**/.netrc",
-            "**/.npmrc",
-            "**/.pypirc",
-        ]
-    )
+    default_ignore = "\n".join([
+        "# ctxpack ignore patterns (gitignore-style)",
+        ".git/", ".svn/", ".hg/",
+        "__pycache__/", "*.pyc", "*.pyo",
+        "node_modules/", "venv/", ".venv/",
+        "dist/", "build/",
+        ".ruff_cache/", ".pytest_cache/", ".mypy_cache/",
+        ".tox/", ".eggs/", "htmlcov/",
+        ".coverage",
+        "*.log", "*.lock", "package-lock.json",
+        ".DS_Store", "Thumbs.db",
+        "ctxpack.context.json", "ctxpack.context.md",
+        "# Secret-safe defaults (credentials never reach the pack)",
+        ".env",
+        ".env.*",
+        "!.env.example",
+        "*.pem",
+        "*.key",
+        "*.p12",
+        "*.pfx",
+        "*.crt",
+        "*.cer",
+        "*.gpg",
+        "*.asc",
+        "**/.aws/**",
+        "**/.ssh/**",
+        "**/.netrc",
+        "**/.npmrc",
+        "**/.pypirc",
+    ])
     default_config = json.dumps(
         {
             "budget_tokens": 8000,
