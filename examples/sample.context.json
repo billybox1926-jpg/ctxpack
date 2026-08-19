@@ -1,0 +1,21 @@
+{
+  "generator": "ctxpack",
+  "root": "/home/user/myproject",
+  "budget_tokens": 8000,
+  "files": [
+    {
+      "path": "README.md",
+      "size_bytes": 1250,
+      "tokens_estimate": 312,
+      "truncated": false,
+      "content": "# ctxpack\n\n**Dependency-free repo-to-prompt pack builder.**\n..."
+    },
+    {
+      "path": "ctxpack.py",
+      "size_bytes": 4520,
+      "tokens_estimate": 1130,
+      "truncated": false,
+      "content": "#!/usr/bin/env python3\n\"\"\"\nctxpack - Dependency-free repo-to-prompt pack builder.\n\"\"\"\n..."
+    }
+  ]
+}
