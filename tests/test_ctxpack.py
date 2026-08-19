@@ -801,7 +801,6 @@ class TestV020Regressions:
     Each test here failed before its corresponding fix, so they document
     behaviour rather than restating the implementation.
     """
-
     def test_ctxignore_defaults_are_actually_applied(self, tmp_path):
         """load_ignore_patterns() was defined but never called by cmd_pack.
 
@@ -925,3 +924,185 @@ class TestV020Regressions:
         assert "Omitted files" in md
         assert "dropped.py" in md
         assert "Files included: 1" in md
+
+
+class TestSecretSafeDefaults:
+    """Regression tests for the secret-safe default ignore policy (issue #5).
+
+    These tests prove that credential-bearing files are excluded from
+    generated packs by default, matching the README security claim.
+    """
+
+    def test_env_file_excluded(self, tmp_path):
+        """`.env` must never reach the pack."""
+        (tmp_path / ".env").write_text("SECRET_KEY=abc123", encoding="utf-8")
+        (tmp_path / "main.py").write_text("print('hi')", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type("Args", (), {"budget": 100000, "no_config": True,
+                                     "include": None, "exclude": None,
+                                     "output_dir": None, "base_name": None})()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert ".env" not in paths
+        assert "main.py" in paths
+
+    def test_env_local_excluded(self, tmp_path):
+        """`.env.local`, `.env.production`, etc. must be excluded."""
+        (tmp_path / ".env.local").write_text("DB_PASSWORD=x", encoding="utf-8")
+        (tmp_path / ".env.production").write_text("API_KEY=y", encoding="utf-8")
+        (tmp_path / ".env.example").write_text("API_KEY=changeme", encoding="utf-8")
+        (tmp_path / "app.py").write_text("pass", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type("Args", (), {"budget": 100000, "no_config": True,
+                                     "include": None, "exclude": None,
+                                     "output_dir": None, "base_name": None})()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert ".env.local" not in paths
+        assert ".env.production" not in paths
+        # .env.example is the conventional non-secret template
+        assert ".env.example" in paths
+        assert "app.py" in paths
+
+    def test_private_key_excluded(self, tmp_path):
+        """`*.pem` and `*.key` files must be excluded."""
+        (tmp_path / "id_rsa.pem").write_text("-----BEGIN PRIVATE KEY-----", encoding="utf-8")
+        (tmp_path / "server.key").write_text("-----BEGIN PRIVATE KEY-----", encoding="utf-8")
+        (tmp_path / "cert.crt").write_text("-----BEGIN CERTIFICATE-----", encoding="utf-8")
+        (tmp_path / "code.py").write_text("x = 1", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type("Args", (), {"budget": 100000, "no_config": True,
+                                     "include": None, "exclude": None,
+                                     "output_dir": None, "base_name": None})()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert "id_rsa.pem" not in paths
+        assert "server.key" not in paths
+        assert "cert.crt" not in paths
+        assert "code.py" in paths
+
+    def test_certificate_files_excluded(self, tmp_path):
+        """`*.p12`, `*.pfx`, `*.cer` files must be excluded."""
+        (tmp_path / "keystore.p12").write_bytes(b"\x00")
+        (tmp_path / "identity.pfx").write_bytes(b"\x00")
+        (tmp_path / "ca-root.cer").write_text("cert", encoding="utf-8")
+        (tmp_path / "src.py").write_text("pass", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type("Args", (), {"budget": 100000, "no_config": True,
+                                     "include": None, "exclude": None,
+                                     "output_dir": None, "base_name": None})()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert "keystore.p12" not in paths
+        assert "identity.pfx" not in paths
+        assert "ca-root.cer" not in paths
+        assert "src.py" in paths
+
+    def test_credential_directories_excluded(self, tmp_path):
+        """`.aws/` and `.ssh/` directories must be fully excluded."""
+        aws_dir = tmp_path / ".aws"
+        aws_dir.mkdir()
+        (aws_dir / "credentials").write_text("[default]\naws_access_key_id=AKIA", encoding="utf-8")
+        ssh_dir = tmp_path / ".ssh"
+        ssh_dir.mkdir()
+        (ssh_dir / "id_ed25519").write_text("ssh-ed25519 AAAA", encoding="utf-8")
+        (ssh_dir / "config").write_text("Host *", encoding="utf-8")
+        (tmp_path / "main.py").write_text("pass", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type("Args", (), {"budget": 100000, "no_config": True,
+                                     "include": None, "exclude": None,
+                                     "output_dir": None, "base_name": None})()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert not any(p.startswith(".aws/") for p in paths)
+        assert not any(p.startswith(".ssh/") for p in paths)
+        assert "main.py" in paths
+
+    def test_auth_dotfiles_excluded(self, tmp_path):
+        """.netrc, .npmrc, .pypirc files must be excluded."""
+        (tmp_path / ".netrc").write_text("machine github.com", encoding="utf-8")
+        (tmp_path / ".npmrc").write_text("//registry.npmjs.org/:_authToken=xyz", encoding="utf-8")
+        (tmp_path / ".pypirc").write_text("[pypi]\nusername: user", encoding="utf-8")
+        (tmp_path / "script.py").write_text("pass", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type("Args", (), {"budget": 100000, "no_config": True,
+                                     "include": None, "exclude": None,
+                                     "output_dir": None, "base_name": None})()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert ".netrc" not in paths
+        assert ".npmrc" not in paths
+        assert ".pypirc" not in paths
+        assert "script.py" in paths
+
+    def test_gpg_and_asc_excluded(self, tmp_path):
+        """`*.gpg` and `*.asc` files must be excluded."""
+        (tmp_path / "secret.gpg").write_bytes(b"\x85\x02")
+        (tmp_path / "message.asc").write_text("-----BEGIN PGP MESSAGE-----", encoding="utf-8")
+        (tmp_path / "app.py").write_text("pass", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type("Args", (), {"budget": 100000, "no_config": True,
+                                     "include": None, "exclude": None,
+                                     "output_dir": None, "base_name": None})()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert "secret.gpg" not in paths
+        assert "message.asc" not in paths
+        assert "app.py" in paths
+
+    def test_negation_pattern_works(self, tmp_path):
+        """A `!`-prefixed pattern must re-include a path an earlier pattern excluded."""
+        # User wants to keep a test fixture despite *.pem being excluded
+        (tmp_path / "fixture.pem").write_text("test key", encoding="utf-8")
+        (tmp_path / "real.pem").write_text("real key", encoding="utf-8")
+
+        ignore_file = tmp_path / ctxpack.DEFAULT_IGNORE_FILE
+        ignore_file.write_text("!fixture.pem\n", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type("Args", (), {"budget": 100000, "no_config": True,
+                                     "include": None, "exclude": None,
+                                     "output_dir": None, "base_name": None})()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert "fixture.pem" in paths
+        assert "real.pem" not in paths

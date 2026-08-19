@@ -43,7 +43,12 @@ def load_config(root: Path) -> dict:
     return {}
 
 def load_ignore_patterns(root: Path, cli_exclude: list[str]) -> list[str]:
-    """Load patterns from .ctxignore, merged with CLI excludes."""
+    """Load patterns from .ctxignore, merged with CLI excludes.
+
+    Secret-safe defaults: local env files, private keys, and certificate
+    bundles are excluded by default so credentials never reach the pack.
+    ``!.env.example`` preserves the conventional template name.
+    """
     default_patterns = [
         ".git/**", ".svn/**", ".hg/**",
         "__pycache__/**", "*.pyc", "*.pyo",
@@ -53,45 +58,48 @@ def load_ignore_patterns(root: Path, cli_exclude: list[str]) -> list[str]:
         ".tox/**", ".eggs/**", "*.egg-info/**", "htmlcov/**",
         ".coverage", ".coverage.*",
         "*.log", "*.lock", "package-lock.json",
-        ".DS_Store", "Thumbs.db", 
+        ".DS_Store", "Thumbs.db",
         DEFAULT_CONFIG_FILE, f"{DEFAULT_BASE_NAME}.context.json", f"{DEFAULT_BASE_NAME}.context.md",
-        # Secret-bearing files: exclude by default for security
+        # Secret-safe defaults
         ".env",
         ".env.*",
         "!.env.example",
         "*.pem",
         "*.key",
         "*.p12",
-        "*.pfx"
+        "*.pfx",
+        "*.crt",
+        "*.cer",
+        "*.jks",
+        "*.keystore",
+        "*.gpg",
+        "*.asc",
+        "**/.aws/**",
+        "**/.ssh/**",
+        "**/.netrc",
+        "**/.npmrc",
+        "**/.pypirc",
     ]
     ignore_file = root / DEFAULT_IGNORE_FILE
     patterns = list(default_patterns)
-    
+
     if ignore_file.exists():
         with ignore_file.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
                     patterns.append(line)
-                    
+
     # CLI excludes take precedence and are appended
     patterns.extend(cli_exclude)
     return patterns
 
 def matches_pattern(rel: str, name: str, pattern: str) -> bool:
     """Check if a path matches a gitignore-style pattern.
-    
-    Supported semantics (documented subset of gitignore):
-    - Bare patterns (e.g., `*.log`) match by filename anywhere in tree
-    - Patterns with `/` are matched against relative path from root
-    - Leading `/` anchors pattern to root (currently treated same as without for simplicity)
-    - Trailing `/` matches directories only (currently stripped for matching)
-    - `**` matches zero or more directory levels
-    - `dir/**` matches everything inside dir (including dir itself)
-    - Negation patterns (`!foo`) handled in should_process(), not here
-    
-    Note: This is a simplified subset of full gitignore semantics. See README
-    for exactly which patterns are supported.
+
+    Supports `**` as a wildcard spanning path segments, so `**/.aws/**`
+    matches `.aws/credentials` at the root of the scanned directory
+    as well as nested paths.
     """
     pat = pattern.rstrip("/")
     
@@ -141,45 +149,49 @@ def matches_pattern(rel: str, name: str, pattern: str) -> bool:
     if "/" in pat_clean:
         if fnmatch.fnmatch(rel, pat_clean):
             return True
-    
+        # `**/` at the start must also match at the root of the tree,
+        # not just nested paths. Strip it and retry.
+        if pat.startswith("**/"):
+            stripped = pat[3:]
+            stripped_regex = "^" + re.escape(stripped).replace(r"\*\*", ".*").replace(r"\*", "[^/]*") + "$"
+            if re.match(stripped_regex, rel):
+                return True
+            # Also match the directory itself for `**/.dir/**` patterns.
+            if stripped.endswith("/**") and (stripped_path := stripped[:-3]):
+                return fnmatch.fnmatch(rel, stripped_path)
     return False
 
 def should_process(path: Path, root: Path, include_patterns: list[str], exclude_patterns: list[str]) -> bool:
     """Determine if a file should be processed based on include/exclude rules.
-    
-    Supports gitignore-style negation patterns: patterns starting with '!' 
-    re-include files that matched a previous exclusion pattern.
+
+    Negation patterns (``!``-prefixed) in ``exclude_patterns`` re-include a
+    path that an earlier pattern excluded, matching gitignore semantics where
+    the last matching pattern wins.
     """
     rel = path.relative_to(root).as_posix()
     name = path.name
-    
-    # Track whether the file has been excluded so far
-    is_excluded = False
-    
-    # Process patterns in order, allowing negation patterns to re-include
+
+    # 1. Exclude takes absolute precedence, with negation support.
+    # Later negations can override earlier exclusions.
+    excluded = False
     for pat in exclude_patterns:
         if pat.startswith("!"):
-            # Negation pattern: re-include if it matches
-            neg_pat = pat[1:]
-            if is_excluded and matches_pattern(rel, name, neg_pat):
-                is_excluded = False
-        else:
-            # Normal exclusion pattern
-            if matches_pattern(rel, name, pat):
-                is_excluded = True
-    
-    if is_excluded:
+            if matches_pattern(rel, name, pat[1:]):
+                excluded = False
+        elif matches_pattern(rel, name, pat):
+            excluded = True
+    if excluded:
         return False
-            
+
     # 2. If no include patterns, everything not excluded is included
     if not include_patterns:
         return True
-        
+
     # 3. Must match at least one include pattern
     for pat in include_patterns:
         if matches_pattern(rel, name, pat):
             return True
-            
+
     return False
 
 def estimate_tokens(text: str) -> int:
@@ -233,23 +245,23 @@ def build_file_inventory(root: Path, include_patterns: list[str], exclude_patter
     inventory = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirpath = Path(dirpath)
-        
+
         # Filter dirs in-place to avoid descending ignored dirs
         valid_dirs = []
         for d in dirnames:
             if should_process(dirpath / d, root, include_patterns, exclude_patterns):
                 valid_dirs.append(d)
         dirnames[:] = valid_dirs
-        
+
         for fname in filenames:
             fpath = dirpath / fname
             if not should_process(fpath, root, include_patterns, exclude_patterns):
                 continue
-                
+
             content = read_text_file(fpath)
             if content is None:
                 continue
-                
+
             rel = fpath.relative_to(root).as_posix()
             inventory.append({
                 "path": rel,
@@ -257,7 +269,7 @@ def build_file_inventory(root: Path, include_patterns: list[str], exclude_patter
                 "tokens_estimate": estimate_tokens(content),
                 "content": content
             })
-            
+
     inventory.sort(key=lambda x: x["path"])
     return inventory
 
@@ -383,11 +395,11 @@ def print_summary(inventory: list[dict], original_inventory: list[dict], budget:
     total_tokens = sum(item["tokens_estimate"] for item in inventory)
     original_tokens = sum(item["tokens_estimate"] for item in original_inventory)
     truncated_count = sum(1 for item in inventory if item.get("truncated"))
-    
+
     largest = max(original_inventory, key=lambda x: x["tokens_estimate"]) if original_inventory else {"path": "N/A", "tokens_estimate": 0}
-    
+
     pct = (total_tokens / budget * 100) if budget > 0 else 0
-    
+
     print("\n" + "="*40)
     print(" ctxpack Summary")
     print("="*40)
@@ -413,12 +425,24 @@ def cmd_init(args):
         ".coverage",
         "*.log", "*.lock", "package-lock.json",
         ".DS_Store", "Thumbs.db",
-        "# Secret-bearing files: excluded by default for security",
+        "ctxpack.context.json", "ctxpack.context.md",
+        "# Secret-safe defaults (credentials never reach the pack)",
         ".env",
         ".env.*",
-        "!.env.example",  # Allow template files
-        "*.pem", "*.key", "*.p12", "*.pfx",
-        "ctxpack.context.json", "ctxpack.context.md"
+        "!.env.example",
+        "*.pem",
+        "*.key",
+        "*.p12",
+        "*.pfx",
+        "*.crt",
+        "*.cer",
+        "*.gpg",
+        "*.asc",
+        "**/.aws/**",
+        "**/.ssh/**",
+        "**/.netrc",
+        "**/.npmrc",
+        "**/.pypirc",
     ])
     default_config = json.dumps({
         "budget_tokens": 8000,
@@ -430,13 +454,13 @@ def cmd_init(args):
 
     ignore_path = root / DEFAULT_IGNORE_FILE
     config_path = root / DEFAULT_CONFIG_FILE
-    
+
     if not ignore_path.exists():
         ignore_path.write_text(default_ignore, encoding="utf-8")
         print(f"Created {DEFAULT_IGNORE_FILE}")
     else:
         print(f"{DEFAULT_IGNORE_FILE} already exists")
-        
+
     if not config_path.exists():
         config_path.write_text(default_config, encoding="utf-8")
         print(f"Created {DEFAULT_CONFIG_FILE}")
@@ -502,7 +526,7 @@ def cmd_pack(args):
     print(f"Scanning {root} ...")
     original_inventory = build_file_inventory(root, include_patterns, exclude_patterns)
     print(f"Found {len(original_inventory)} text files before budget trim.")
-    
+
     inventory, is_incomplete = trim_to_budget(original_inventory, budget)
 
     # Resolve output paths relative to the scanned root, not the process cwd,
@@ -520,7 +544,7 @@ def cmd_pack(args):
 
     print(f"Wrote {md_path}")
     print(f"Wrote {json_path}")
-    
+
     print_summary(inventory, original_inventory, budget)
 
 def main():

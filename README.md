@@ -113,6 +113,27 @@ See the [`examples/`](./examples/) directory for sample outputs:
 - [`sample.context.md`](./examples/sample.context.md)
 - [`sample.context.json`](./examples/sample.context.json)
 
+## Security
+
+### Secret-safe by default
+
+`ctxpack` excludes credential-bearing files by default so they never reach the generated pack. The built-in ignore policy covers:
+
+- **Local env files**: `.env`, `.env.*` (but not `.env.example`, the conventional template)
+- **Private keys & certificates**: `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.crt`, `*.cer`
+- **Keystores**: `*.jks`, `*.keystore`
+- **GPG / signing material**: `*.gpg`, `*.asc`
+- **Credential directories**: `**/.aws/**`, `**/.ssh/**`
+- **Auth dotfiles**: `**/.netrc`, `**/.npmrc`, `**/.pypirc`
+
+These defaults are applied automatically; you do not need to list them in `.ctxignore`. Custom `.ctxignore` entries are merged with these defaults and can add further exclusions.
+
+To opt a specific secret file back in (e.g., a test fixture), add a negation pattern to `.ctxignore`:
+
+```text
+!important/test-fixture.pem
+```
+
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.

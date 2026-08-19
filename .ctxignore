@@ -32,3 +32,20 @@ Thumbs.db
 *.pfx
 ctxpack.context.json
 ctxpack.context.md
+# Secret-safe defaults (credentials never reach the pack)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.gpg
+*.asc
+**/.aws/**
+**/.ssh/**
+**/.netrc
+**/.npmrc
+**/.pypirc
