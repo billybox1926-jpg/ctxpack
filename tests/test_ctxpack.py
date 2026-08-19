@@ -1106,7 +1106,8 @@ class TestV020Regressions:
             assert total <= budget, f"budget {budget} exceeded: {total}"
 
     def test_cmd_pack_needs_no_hidden_args_attributes(self, tmp_path):
-        """cmd_pack read args.*_set, which only main() set, so library callers crashed."""
+        """cmd_pack previously read args.*_set, which only main() set."""
+
         (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
 
         class MinimalArgs:

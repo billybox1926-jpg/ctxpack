@@ -419,7 +419,9 @@ TRUNCATION_MARKER = "\n\n...[TRUNCATED by ctxpack to fit budget]..."
 def trim_to_budget(
     inventory: list[dict], budget_tokens: int
 ) -> tuple[list[dict], bool]:
-    """Truncate file contents to fit token budget. Returns (trimmed_inventory, is_incomplete).
+    """Truncate file contents to fit token budget.
+
+    Returns (trimmed_inventory, is_incomplete).
 
     Every input file appears in the result so the pack is never silently
     missing paths: files past the budget are recorded with empty content and
@@ -494,7 +496,8 @@ def generate_markdown(
         lines.append(f"Files omitted (over budget): {len(omitted)}")
     if is_incomplete:
         lines.append(
-            "⚠️ **WARNING**: Total repository tokens exceeded the budget. Some files are truncated or omitted."
+            "⚠️ **WARNING**: Total repository tokens exceeded the budget. "
+            "Some files are truncated or omitted."
         )
     lines.extend(["", "---", ""])
 
@@ -778,7 +781,10 @@ def main():
         "--budget",
         type=int,
         default=None,
-        help=f"max estimated token budget (chars/4 heuristic, default {DEFAULT_BUDGET_TOKENS})",
+        help=(
+            f"max estimated token budget (chars/4 heuristic, "
+            f"default {DEFAULT_BUDGET_TOKENS})"
+        ),
     )
     pack_parser.add_argument(
         "--include",
@@ -810,7 +816,10 @@ def main():
     pack_parser.add_argument(
         "--show-absolute-paths",
         action="store_true",
-        help="include the resolved absolute root path in output (default: privacy-preserving '.')",
+        help=(
+            "include the resolved absolute root path in output "
+            "(default: privacy-preserving '.')"
+        ),
     )
     pack_parser.set_defaults(func=cmd_pack)
 
