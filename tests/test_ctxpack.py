@@ -129,6 +129,56 @@ class TestShouldIgnore:
         assert ctxpack.should_process(json_output, tmp_path, [], patterns) is False
         assert ctxpack.should_process(md_output, tmp_path, [], patterns) is False
 
+    def test_ignore_env_file(self, tmp_path):
+        """Should ignore .env file (secret-bearing)."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("SECRET_KEY=supersecret123")
+        
+        patterns = ctxpack.load_ignore_patterns(tmp_path, [])
+        
+        assert ctxpack.should_process(env_file, tmp_path, [], patterns) is False
+
+    def test_ignore_env_local_file(self, tmp_path):
+        """Should ignore .env.local and other .env.* variants."""
+        env_local = tmp_path / ".env.local"
+        env_production = tmp_path / ".env.production"
+        env_local.write_text("DB_PASSWORD=password123")
+        env_production.write_text("API_KEY=abc123")
+        
+        patterns = ctxpack.load_ignore_patterns(tmp_path, [])
+        
+        assert ctxpack.should_process(env_local, tmp_path, [], patterns) is False
+        assert ctxpack.should_process(env_production, tmp_path, [], patterns) is False
+
+    def test_allow_env_example_file(self, tmp_path):
+        """Should NOT ignore .env.example (template file allowed)."""
+        env_example = tmp_path / ".env.example"
+        env_example.write_text("SECRET_KEY=your_secret_here")
+        
+        patterns = ctxpack.load_ignore_patterns(tmp_path, [])
+        
+        # .env.example should be allowed (not ignored)
+        assert ctxpack.should_process(env_example, tmp_path, [], patterns) is True
+
+    def test_ignore_pem_key_files(self, tmp_path):
+        """Should ignore private key and certificate files."""
+        pem_file = tmp_path / "server.pem"
+        key_file = tmp_path / "private.key"
+        p12_file = tmp_path / "cert.p12"
+        pfx_file = tmp_path / "cert.pfx"
+        
+        pem_file.write_text("-----BEGIN CERTIFICATE-----")
+        key_file.write_text("-----BEGIN PRIVATE KEY-----")
+        p12_file.write_bytes(b"\x00\x01\x02")
+        pfx_file.write_bytes(b"\x00\x01\x02")
+        
+        patterns = ctxpack.load_ignore_patterns(tmp_path, [])
+        
+        assert ctxpack.should_process(pem_file, tmp_path, [], patterns) is False
+        assert ctxpack.should_process(key_file, tmp_path, [], patterns) is False
+        assert ctxpack.should_process(p12_file, tmp_path, [], patterns) is False
+        assert ctxpack.should_process(pfx_file, tmp_path, [], patterns) is False
+
 
 class TestEstimateTokens:
     """Tests for estimate_tokens function."""
