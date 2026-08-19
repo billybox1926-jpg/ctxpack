@@ -1,0 +1,15 @@
+{
+  "generator": "ctxpack",
+  "root": "/tmp/pytest-of-root/pytest-19/test_generate_output_files0",
+  "budget_tokens": 8000,
+  "is_incomplete": false,
+  "files": [
+    {
+      "path": "test.txt",
+      "size_bytes": 11,
+      "tokens_estimate": 2,
+      "truncated": false,
+      "content": "Hello World"
+    }
+  ]
+}

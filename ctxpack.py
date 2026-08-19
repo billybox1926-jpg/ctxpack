@@ -64,8 +64,11 @@ def load_ignore_patterns(root: Path, cli_exclude: list[str]) -> list[str]:
 def matches_pattern(rel: str, name: str, pattern: str) -> bool:
     """Check if a path matches a gitignore-style pattern."""
     pat = pattern.rstrip("/")
-    # Exact or recursive directory match
-    if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(rel, pat + "/**"):
+    # Exact match (for directories like ".git" matching pattern ".git/**")
+    if fnmatch.fnmatch(rel, pat):
+        return True
+    # Recursive directory match (e.g., ".git/config" matching ".git/**")
+    if fnmatch.fnmatch(rel, pat + "/**"):
         return True
     # Bare filename match (e.g., "*.log")
     if fnmatch.fnmatch(name, pat):
