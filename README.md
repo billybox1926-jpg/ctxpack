@@ -176,6 +176,16 @@ To opt a specific secret file back in (e.g., a test fixture), add a negation pat
 !important/test-fixture.pem
 ```
 
+### Path privacy
+
+Generated packs use a privacy-preserving `.` representation for the project root by default. To include the absolute path (e.g., for debugging), use:
+
+```bash
+python ctxpack.py pack --show-absolute-paths
+```
+
+This prevents accidentally leaking local usernames, directory structures, or project locations when sharing context packs.
+
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.

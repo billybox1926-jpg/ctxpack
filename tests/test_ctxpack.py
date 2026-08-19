@@ -1375,3 +1375,62 @@ class TestTokenBudgetSemantics:
         json_file = tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")
         data = json.loads(json_file.read_text())
         assert data["budget_tokens"] == 12000
+
+
+class TestPathPrivacy:
+    """Regression tests for path privacy in generated packs (issue #8).
+
+    Default output must not expose absolute local filesystem paths.
+    Opt-in via --show-absolute-paths is available for debugging.
+    """
+
+    def test_default_markdown_uses_privacy_preserving_root(self, tmp_path):
+        """Default Markdown output shows '.' not the absolute path."""
+        (tmp_path / "test.txt").write_text("hello", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type("Args", (), {"budget": 10000, "no_config": True,
+                                     "include": None, "exclude": None,
+                                     "output_dir": None, "base_name": None,
+                                     "show_absolute_paths": False})()
+            ctxpack.cmd_pack(args)
+
+        md_file = tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.md")
+        md = md_file.read_text()
+        assert "Generated from: `.`" in md
+        assert str(tmp_path.resolve()) not in md
+
+    def test_default_json_uses_privacy_preserving_root(self, tmp_path):
+        """Default JSON output shows '.' not the absolute path."""
+        (tmp_path / "test.txt").write_text("hello", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type("Args", (), {"budget": 10000, "no_config": True,
+                                     "include": None, "exclude": None,
+                                     "output_dir": None, "base_name": None,
+                                     "show_absolute_paths": False})()
+            ctxpack.cmd_pack(args)
+
+        json_file = tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")
+        data = json.loads(json_file.read_text())
+        assert data["root"] == "."
+        assert str(tmp_path.resolve()) not in json.dumps(data)
+
+    def test_opt_in_show_absolute_paths(self, tmp_path):
+        """--show-absolute-paths exposes the resolved path."""
+        (tmp_path / "test.txt").write_text("hello", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type("Args", (), {"budget": 10000, "no_config": True,
+                                     "include": None, "exclude": None,
+                                     "output_dir": None, "base_name": None,
+                                     "show_absolute_paths": True})()
+            ctxpack.cmd_pack(args)
+
+        md_file = tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.md")
+        md = md_file.read_text()
+        assert str(tmp_path.resolve()) in md
+
+        json_file = tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")
+        data = json.loads(json_file.read_text())
+        assert data["root"] == str(tmp_path.resolve())

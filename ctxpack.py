@@ -413,14 +413,14 @@ def trim_to_budget(inventory: list[dict], budget_tokens: int) -> tuple[list[dict
 
     return result, is_incomplete
 
-def generate_markdown(inventory: list[dict], root: Path, is_incomplete: bool) -> str:
+def generate_markdown(inventory: list[dict], root: Path, is_incomplete: bool, show_absolute_paths: bool = False) -> str:
     """Generate markdown output."""
     included = [i for i in inventory if not i.get("omitted")]
     omitted = [i for i in inventory if i.get("omitted")]
     lines = [
         "# ctxpack Context Pack",
         "",
-        f"Generated from: `{root.resolve()}`",
+        f"Generated from: `{root.resolve() if show_absolute_paths else '.'}`",
         f"Files included: {len(included)}",
     ]
     if omitted:
@@ -448,12 +448,12 @@ def generate_markdown(inventory: list[dict], root: Path, is_incomplete: bool) ->
 
     return "\n".join(lines)
 
-def generate_json(inventory: list[dict], root: Path, budget: int, is_incomplete: bool) -> dict:
+def generate_json(inventory: list[dict], root: Path, budget: int, is_incomplete: bool, show_absolute_paths: bool = False) -> dict:
     """Generate JSON output."""
     included = [i for i in inventory if not i.get("omitted")]
     return {
         "generator": "ctxpack",
-        "root": str(root.resolve()),
+        "root": str(root.resolve() if show_absolute_paths else "."),
         "budget_tokens": budget,
         "is_incomplete": is_incomplete,
         "files_included": len(included),
@@ -620,8 +620,8 @@ def cmd_pack(args):
     md_path = out_dir / f"{base_name}.context.md"
     json_path = out_dir / f"{base_name}.context.json"
 
-    md_path.write_text(generate_markdown(inventory, root, is_incomplete), encoding="utf-8")
-    json_path.write_text(json.dumps(generate_json(inventory, root, budget, is_incomplete), indent=2), encoding="utf-8")
+    md_path.write_text(generate_markdown(inventory, root, is_incomplete, show_absolute_paths=getattr(args, "show_absolute_paths", False)), encoding="utf-8")
+    json_path.write_text(json.dumps(generate_json(inventory, root, budget, is_incomplete, show_absolute_paths=getattr(args, "show_absolute_paths", False)), indent=2), encoding="utf-8")
 
     print(f"Wrote {md_path}")
     print(f"Wrote {json_path}")
@@ -650,6 +650,8 @@ def main():
                              help="base name for output files (default: 'ctxpack')")
     pack_parser.add_argument("--no-config", action="store_true",
                              help="ignore ctxpack.json settings")
+    pack_parser.add_argument("--show-absolute-paths", action="store_true",
+                             help="include the resolved absolute root path in output (default: privacy-preserving '.')")
     pack_parser.set_defaults(func=cmd_pack)
 
     args = parser.parse_args()
