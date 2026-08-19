@@ -1,1 +1,40 @@
-Nothing should be ignored since only a README.md file was modified and no build artifacts, dependencies, or temporary files were detected in the changes.
+# Compiled Python files
+*.pyc
+__pycache__/
+
+# Virtual environments
+venv/
+.venv/
+.env
+.env.local
+*.env.*
+
+# Test coverage
+.coverage
+coverage/
+htmlcov/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Logs
+*.log
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Dependencies cache
+.mypy_cache/
+.pytest_cache/
+
+# Generated context artifacts (never commit these)
+ctxpack.context.md
+ctxpack.context.json
+docs/project.context.md
+docs/project.context.json
