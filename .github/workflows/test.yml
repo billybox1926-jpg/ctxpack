@@ -15,17 +15,105 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-        
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install pytest
-        
+
     - name: Run pytest
+      run: |
+        pytest -v
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install ruff
+      run: |
+        python -m pip install --upgrade pip
+        pip install ruff
+
+    - name: Run ruff check
+      run: |
+        ruff check ctxpack.py tests/test_ctxpack.py
+
+    - name: Run ruff format check
+      run: |
+        ruff format --check ctxpack.py tests/test_ctxpack.py
+
+  security:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest
+
+    - name: Run security regression tests
+      run: |
+        pytest -v -k "SecretSafe or PathPrivacy"
+
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install build tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install build pytest
+
+    - name: Build sdist and wheel
+      run: |
+        python -m build
+
+    - name: Install built wheel
+      run: |
+        pip install dist/*.whl
+
+    - name: Verify CLI works after install
+      run: |
+        ctxpack --help
+        ctxpack init --help
+        ctxpack pack --help
+
+    - name: Run CLI workflow test
+      run: |
+        cd /tmp
+        mkdir test_repo && cd test_repo
+        echo "print('hello')" > main.py
+        echo "# README" > README.md
+        ctxpack pack --no-config --budget 1000
+        test -f ctxpack.context.md
+        test -f ctxpack.context.json
+
+    - name: Run pytest against installed package
       run: |
         pytest -v
