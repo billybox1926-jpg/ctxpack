@@ -3,6 +3,12 @@
 ctxpack - Dependency-free repo-to-prompt pack builder.
 """
 
+# Postponed annotation evaluation: the signatures below use `str | None` and
+# builtin generics, which are 3.10+ syntax when evaluated eagerly. This keeps
+# the module importable on Python 3.9, which pyproject.toml and the CI matrix
+# both claim to support.
+from __future__ import annotations
+
 import argparse
 import fnmatch
 import json
@@ -43,6 +49,9 @@ def load_ignore_patterns(root: Path, cli_exclude: list[str]) -> list[str]:
         "__pycache__/**", "*.pyc", "*.pyo",
         "node_modules/**", "venv/**", ".venv/**",
         "dist/**", "build/**",
+        ".ruff_cache/**", ".pytest_cache/**", ".mypy_cache/**",
+        ".tox/**", ".eggs/**", "*.egg-info/**", "htmlcov/**",
+        ".coverage", ".coverage.*",
         "*.log", "*.lock", "package-lock.json",
         ".DS_Store", "Thumbs.db", 
         DEFAULT_CONFIG_FILE, f"{DEFAULT_BASE_NAME}.context.json", f"{DEFAULT_BASE_NAME}.context.md"
@@ -70,6 +79,13 @@ def matches_pattern(rel: str, name: str, pattern: str) -> bool:
     # Recursive directory match (e.g., ".git/config" matching ".git/**")
     if fnmatch.fnmatch(rel, pat + "/**"):
         return True
+    # A "dir/**" pattern must also match the directory itself, otherwise
+    # os.walk still descends into .git / node_modules / __pycache__ and only
+    # their contents get filtered.
+    if pat.endswith("/**"):
+        base = pat[:-3]
+        if fnmatch.fnmatch(rel, base) or rel.startswith(base + "/"):
+            return True
     # Bare filename match (e.g., "*.log")
     if fnmatch.fnmatch(name, pat):
         return True
@@ -105,6 +121,33 @@ def estimate_tokens(text: str) -> int:
     """Very rough token estimate: ~4 chars per token."""
     return max(1, len(text) // 4)
 
+def looks_binary(path: Path, probe_bytes: int = 8192) -> bool:
+    """Detect binary content by inspecting bytes, not just the extension.
+
+    Extension checks alone let files like .coverage (a SQLite database),
+    .db, .sqlite, or any unknown suffix through, where errors="replace"
+    turns them into thousands of replacement characters that consume the
+    token budget and crowd out real source.
+    """
+    try:
+        with path.open("rb") as f:
+            chunk = f.read(probe_bytes)
+    except OSError:
+        return True
+    if not chunk:
+        return False
+    if b"\x00" in chunk:
+        return True
+    # A high proportion of undecodable bytes means this is not text.
+    try:
+        chunk.decode("utf-8")
+    except UnicodeDecodeError:
+        decoded = chunk.decode("utf-8", errors="replace")
+        if decoded.count("\ufffd") / max(1, len(decoded)) > 0.05:
+            return True
+    return False
+
+
 def read_text_file(path: Path) -> str | None:
     """Read file as text if not binary and not too large."""
     if path.suffix.lower() in BINARY_EXTENSIONS:
@@ -113,6 +156,8 @@ def read_text_file(path: Path) -> str | None:
         size = path.stat().st_size
         if size > MAX_FILE_BYTES:
             return f"[File skipped: too large ({size} bytes)]"
+        if looks_binary(path):
+            return None
         with path.open("r", encoding="utf-8", errors="replace") as f:
             return f.read()
     except Exception as e:
@@ -151,69 +196,117 @@ def build_file_inventory(root: Path, include_patterns: list[str], exclude_patter
     inventory.sort(key=lambda x: x["path"])
     return inventory
 
+TRUNCATION_MARKER = "\n\n...[TRUNCATED by ctxpack to fit budget]..."
+
+
 def trim_to_budget(inventory: list[dict], budget_tokens: int) -> tuple[list[dict], bool]:
-    """Truncate file contents to fit token budget. Returns (trimmed_inventory, is_incomplete)."""
+    """Truncate file contents to fit token budget. Returns (trimmed_inventory, is_incomplete).
+
+    Every input file appears in the result so the pack is never silently
+    missing paths: files past the budget are recorded with empty content and
+    omitted=True. The truncation marker is accounted for BEFORE slicing, so
+    the emitted total stays within budget rather than overshooting by the
+    length of the marker.
+    """
     total_original_tokens = sum(item["tokens_estimate"] for item in inventory)
     is_incomplete = total_original_tokens > budget_tokens
-    
+
+    marker_tokens = estimate_tokens(TRUNCATION_MARKER)
     total = 0
     result = []
+    budget_spent = False
+
     for item in inventory:
+        if budget_spent:
+            omitted = dict(item)
+            omitted["tokens_estimate_original"] = item["tokens_estimate"]
+            omitted["content"] = ""
+            omitted["tokens_estimate"] = 0
+            omitted["omitted"] = True
+            result.append(omitted)
+            continue
+
         file_tokens = item["tokens_estimate"]
         if total + file_tokens <= budget_tokens:
             result.append(item)
             total += file_tokens
-        else:
-            remaining = budget_tokens - total
-            if remaining <= 0:
-                break
-            content = item["content"]
-            keep_chars = remaining * 4
-            truncated = content[:keep_chars] + "\n\n...[TRUNCATED by ctxpack to fit budget]..."
-            item_copy = dict(item)
-            item_copy["content"] = truncated
-            item_copy["tokens_estimate"] = estimate_tokens(truncated)
-            item_copy["truncated"] = True
-            result.append(item_copy)
-            total += item_copy["tokens_estimate"]
-            break
-            
+            continue
+
+        # Reserve room for the marker so the result does not exceed budget.
+        remaining = budget_tokens - total - marker_tokens
+        if remaining <= 0:
+            omitted = dict(item)
+            omitted["tokens_estimate_original"] = item["tokens_estimate"]
+            omitted["content"] = ""
+            omitted["tokens_estimate"] = 0
+            omitted["omitted"] = True
+            result.append(omitted)
+            budget_spent = True
+            continue
+
+        truncated = item["content"][:remaining * 4] + TRUNCATION_MARKER
+        item_copy = dict(item)
+        item_copy["content"] = truncated
+        item_copy["tokens_estimate"] = estimate_tokens(truncated)
+        item_copy["truncated"] = True
+        result.append(item_copy)
+        total += item_copy["tokens_estimate"]
+        budget_spent = True
+
     return result, is_incomplete
 
 def generate_markdown(inventory: list[dict], root: Path, is_incomplete: bool) -> str:
     """Generate markdown output."""
+    included = [i for i in inventory if not i.get("omitted")]
+    omitted = [i for i in inventory if i.get("omitted")]
     lines = [
         "# ctxpack Context Pack",
         "",
         f"Generated from: `{root.resolve()}`",
-        f"Files included: {len(inventory)}",
+        f"Files included: {len(included)}",
     ]
+    if omitted:
+        lines.append(f"Files omitted (over budget): {len(omitted)}")
     if is_incomplete:
         lines.append("⚠️ **WARNING**: Total repository tokens exceeded the budget. Some files are truncated or omitted.")
     lines.extend(["", "---", ""])
-    
-    for item in inventory:
+
+    for item in included:
         lines.append(f"## {item['path']}")
         lines.append(f"Size: {item['size_bytes']} bytes | Est. tokens: {item['tokens_estimate']}")
         if item.get("truncated"):
             lines.append("*⚠️ Truncated to fit token budget*")
         lines.extend(["", "```text", item["content"], "```", ""])
-        
+
+    if omitted:
+        # List omitted paths so the reader knows what is missing from the pack.
+        lines.extend(["## Omitted files", "",
+                      "These files were not included because the token budget was exhausted:",
+                      ""])
+        for item in omitted:
+            lines.append(f"- `{item['path']}` ({item['size_bytes']} bytes, "
+                         f"~{item.get('tokens_estimate_original', 0) or 0} tokens)")
+        lines.append("")
+
     return "\n".join(lines)
 
 def generate_json(inventory: list[dict], root: Path, budget: int, is_incomplete: bool) -> dict:
     """Generate JSON output."""
+    included = [i for i in inventory if not i.get("omitted")]
     return {
         "generator": "ctxpack",
         "root": str(root.resolve()),
         "budget_tokens": budget,
         "is_incomplete": is_incomplete,
+        "files_included": len(included),
+        "files_omitted": len(inventory) - len(included),
         "files": [
             {
                 "path": item["path"],
                 "size_bytes": item["size_bytes"],
                 "tokens_estimate": item["tokens_estimate"],
                 "truncated": item.get("truncated", False),
+                "omitted": item.get("omitted", False),
                 "content": item["content"]
             }
             for item in inventory
@@ -250,6 +343,9 @@ def cmd_init(args):
         "__pycache__/", "*.pyc", "*.pyo",
         "node_modules/", "venv/", ".venv/",
         "dist/", "build/",
+        ".ruff_cache/", ".pytest_cache/", ".mypy_cache/",
+        ".tox/", ".eggs/", "htmlcov/",
+        ".coverage",
         "*.log", "*.lock", "package-lock.json",
         ".DS_Store", "Thumbs.db",
         "ctxpack.context.json", "ctxpack.context.md"
@@ -277,32 +373,61 @@ def cmd_init(args):
     else:
         print(f"{DEFAULT_CONFIG_FILE} already exists")
 
+def resolve_settings(args, config: dict) -> tuple[int, str, str]:
+    """Resolve budget/output_dir/base_name with precedence CLI > config > default.
+
+    Uses None as the "not supplied" sentinel rather than comparing against the
+    default value. Comparing against the default made `--budget 8000` (or
+    `--output-dir .`) indistinguishable from omitting the flag, so config
+    silently overrode an explicit choice.
+    """
+    budget = getattr(args, "budget", None)
+    if budget is None:
+        budget = config.get("budget_tokens", DEFAULT_BUDGET_TOKENS)
+
+    output_dir = getattr(args, "output_dir", None)
+    if output_dir is None:
+        output_dir = config.get("output_dir", DEFAULT_OUTPUT_DIR)
+
+    base_name = getattr(args, "base_name", None)
+    if base_name is None:
+        base_name = config.get("base_name", DEFAULT_BASE_NAME)
+
+    return budget, output_dir, base_name
+
+
+def resolve_patterns(args, config: dict) -> tuple[list[str], list[str]]:
+    """Resolve include/exclude patterns with precedence CLI > config."""
+    include_patterns: list[str] = []
+    if getattr(args, "include", None):
+        include_patterns.extend(p.strip() for p in args.include.split(",") if p.strip())
+    elif config.get("include"):
+        include_patterns.extend(config["include"])
+
+    exclude_patterns: list[str] = []
+    if getattr(args, "exclude", None):
+        exclude_patterns.extend(p.strip() for p in args.exclude.split(",") if p.strip())
+    elif config.get("exclude"):
+        exclude_patterns.extend(config["exclude"])
+
+    return include_patterns, exclude_patterns
+
 def cmd_pack(args):
     """Scan repo and build context pack."""
     root = Path.cwd()
-    
+
     # Load config unless --no-config is set
     config = {}
     if not getattr(args, "no_config", False):
         config = load_config(root)
-    
-    # Resolve settings: CLI > Config > Default
-    budget = args.budget if args.budget_set else config.get("budget_tokens", DEFAULT_BUDGET_TOKENS)
-    output_dir = args.output_dir if args.output_dir_set else config.get("output_dir", DEFAULT_OUTPUT_DIR)
-    base_name = args.base_name if args.base_name_set else config.get("base_name", DEFAULT_BASE_NAME)
-    
-    # Merge include/exclude patterns
-    include_patterns = []
-    if args.include:
-        include_patterns.extend([p.strip() for p in args.include.split(",")])
-    elif config.get("include"):
-        include_patterns.extend(config["include"])
-        
-    exclude_patterns = []
-    if args.exclude:
-        exclude_patterns.extend([p.strip() for p in args.exclude.split(",")])
-    elif config.get("exclude"):
-        exclude_patterns.extend(config["exclude"])
+
+    budget, output_dir, base_name = resolve_settings(args, config)
+    include_patterns, cli_exclude = resolve_patterns(args, config)
+
+    # Merge the built-in defaults and .ctxignore with any CLI/config excludes.
+    # The v0.2.0 rewrite left load_ignore_patterns() defined but never called,
+    # so .ctxignore and every default (.git, venv, *.log, ...) were ignored.
+    exclude_patterns = load_ignore_patterns(root, cli_exclude)
 
     print(f"Scanning {root} ...")
     original_inventory = build_file_inventory(root, include_patterns, exclude_patterns)
@@ -310,8 +435,12 @@ def cmd_pack(args):
     
     inventory, is_incomplete = trim_to_budget(original_inventory, budget)
 
-    # Resolve output paths
+    # Resolve output paths relative to the scanned root, not the process cwd,
+    # so ctxpack writes beside the repo it scanned rather than wherever the
+    # shell happens to be.
     out_dir = Path(output_dir)
+    if not out_dir.is_absolute():
+        out_dir = root / out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     md_path = out_dir / f"{base_name}.context.md"
     json_path = out_dir / f"{base_name}.context.json"
@@ -334,32 +463,21 @@ def main():
     init_parser.set_defaults(func=cmd_init)
 
     pack_parser = subparsers.add_parser("pack", help="scan repo and build context pack")
-    pack_parser.add_argument("--budget", type=int, default=DEFAULT_BUDGET_TOKENS,
+    pack_parser.add_argument("--budget", type=int, default=None,
                              help=f"max token budget (default {DEFAULT_BUDGET_TOKENS})")
     pack_parser.add_argument("--include", type=str, default=None,
                              help="comma-separated include patterns (e.g., 'src/**,tests/**')")
     pack_parser.add_argument("--exclude", type=str, default=None,
                              help="comma-separated exclude patterns (takes precedence)")
-    pack_parser.add_argument("--output-dir", type=str, default=DEFAULT_OUTPUT_DIR,
+    pack_parser.add_argument("--output-dir", type=str, default=None,
                              help="directory for output files (default: '.')")
-    pack_parser.add_argument("--base-name", type=str, default=DEFAULT_BASE_NAME,
+    pack_parser.add_argument("--base-name", type=str, default=None,
                              help="base name for output files (default: 'ctxpack')")
     pack_parser.add_argument("--no-config", action="store_true",
                              help="ignore ctxpack.json settings")
     pack_parser.set_defaults(func=cmd_pack)
 
     args = parser.parse_args()
-    
-    # Track if args were explicitly set to override config
-    args.budget_set = hasattr(args, "budget") and args.budget != DEFAULT_BUDGET_TOKENS
-    args.output_dir_set = hasattr(args, "output_dir") and args.output_dir != DEFAULT_OUTPUT_DIR
-    args.base_name_set = hasattr(args, "base_name") and args.base_name != DEFAULT_BASE_NAME
-    
-    if getattr(args, "no_config", False):
-        args.budget_set = True
-        args.output_dir_set = True
-        args.base_name_set = True
-
     args.func(args)
 
 if __name__ == "__main__":
