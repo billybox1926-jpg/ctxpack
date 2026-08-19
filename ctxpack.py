@@ -639,7 +639,7 @@ def main():
 
     pack_parser = subparsers.add_parser("pack", help="scan repo and build context pack")
     pack_parser.add_argument("--budget", type=int, default=None,
-                             help=f"max token budget (default {DEFAULT_BUDGET_TOKENS})")
+                             help=f"max estimated token budget (chars/4 heuristic, default {DEFAULT_BUDGET_TOKENS})")
     pack_parser.add_argument("--include", type=str, default=None,
                              help="comma-separated include patterns (e.g., 'src/**,tests/**')")
     pack_parser.add_argument("--exclude", type=str, default=None,

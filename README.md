@@ -15,8 +15,8 @@ No dependencies. No network. **Secrets excluded by default.**
 - 🚫 Respects `.ctxignore` (gitignore-style patterns)
 - 🪶 Skips binary and overly large files by default
 - 🔒 **Excludes secrets by default**: `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`
-- 🧮 Estimates token usage (approx `chars / 4`)
-- ✂️ Respects a max token budget (`--budget`) and truncates gracefully
+- 🧮 Estimates token usage (approx `chars / 4` — **not** a model tokenizer count)
+- ✂️ Respects a max estimated token budget (`--budget`) and truncates gracefully
 - ⚙️ Simple configuration via optional `ctxpack.json`
 
 ## Installation

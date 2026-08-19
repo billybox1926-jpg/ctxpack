@@ -1265,3 +1265,113 @@ class TestIgnoreSemantics:
         """`\\\\` matches a literal `\\` character."""
         assert ctxpack.matches_pattern("file\\name", "file\\name", r"file\\name") is True
         assert ctxpack.matches_pattern("filename", "filename", r"file\\name") is False
+
+
+class TestTokenBudgetSemantics:
+    """Regression tests for estimated token budget semantics (issue #7).
+
+    These tests prove that budget trimming is deterministic, never
+    overshoots the configured budget, and handles Unicode-heavy inputs
+    consistently. The heuristic is chars / 4 and this is documented
+    as an estimate — NOT a guarantee of model-token counts.
+    """
+
+    # === Exact-budget boundary ===
+
+    def test_exact_budget_no_truncation(self):
+        """Files summing to exactly the budget are kept whole."""
+        inventory = [
+            {"path": "a.txt", "size_bytes": 400,
+             "tokens_estimate": 100, "content": "a" * 400},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 100)
+        assert is_incomplete is False
+        assert result[0].get("truncated") is not True
+        assert result[0].get("omitted") is not True
+
+    def test_one_token_over_budget_truncates(self):
+        """One token over budget triggers truncation."""
+        inventory = [
+            {"path": "a.txt", "size_bytes": 404,
+             "tokens_estimate": 101, "content": "a" * 404},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 100)
+        assert is_incomplete is True
+        assert result[0].get("truncated") is True
+
+    # === Over-budget scenarios ===
+
+    def test_first_file_over_budget_truncates(self):
+        """A single file larger than the budget is truncated."""
+        inventory = [
+            {"path": "big.txt", "size_bytes": 8000,
+             "tokens_estimate": 2000, "content": "b" * 8000},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 100)
+        assert is_incomplete is True
+        assert result[0].get("truncated") is True
+
+    def test_many_files_never_exceed_budget(self):
+        """With many files, total emitted tokens never exceed budget."""
+        inventory = [
+            {"path": f"{c}.txt", "size_bytes": 400,
+             "tokens_estimate": 100, "content": c * 400}
+            for c in "abcdefghij"
+        ]
+        for budget in (50, 100, 150, 250, 500, 999):
+            result, _ = ctxpack.trim_to_budget(inventory, budget)
+            total = sum(i["tokens_estimate"] for i in result)
+            assert total <= budget, f"budget {budget} exceeded: {total}"
+
+    # === Unicode-heavy inputs ===
+
+    def test_unicode_content_estimated_by_chars(self):
+        """Unicode content is estimated by character count, not byte count."""
+        # Each emoji is 1 character but 4 bytes in UTF-8
+        text = "🎉" * 100  # 100 chars, 400 bytes
+        tokens = ctxpack.estimate_tokens(text)
+        assert tokens == 25  # 100 / 4
+
+    def test_unicode_with_ascii_mixed(self):
+        """Mixed ASCII and Unicode still uses chars // 4."""
+        text = "hello 🌍 world"  # 13 chars
+        tokens = ctxpack.estimate_tokens(text)
+        assert tokens == max(1, 13 // 4)  # 3
+
+    def test_cjk_content_estimation(self):
+        """CJK characters are estimated by character count."""
+        text = "你好世界"  # 4 Chinese chars
+        tokens = ctxpack.estimate_tokens(text)
+        assert tokens == 1  # 4 / 4
+
+    # === Determinism ===
+
+    def test_budget_truncation_is_deterministic(self):
+        """Same input + same budget always produces same output."""
+        inventory = [
+            {"path": "a.txt", "size_bytes": 400,
+             "tokens_estimate": 100, "content": "a" * 400},
+            {"path": "b.txt", "size_bytes": 800,
+             "tokens_estimate": 200, "content": "b" * 800},
+        ]
+        result1, inc1 = ctxpack.trim_to_budget(inventory, 100)
+        result2, inc2 = ctxpack.trim_to_budget(inventory, 100)
+        assert inc1 == inc2
+        assert [i["path"] for i in result1] == [i["path"] for i in result2]
+        assert result1[0].get("truncated") == result2[0].get("truncated")
+
+    # === CLI integration ===
+
+    def test_budget_flag_accepted(self, tmp_path):
+        """--budget is accepted as an integer CLI flag."""
+        (tmp_path / "test.txt").write_text("hello", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type("Args", (), {"budget": 12000, "no_config": True,
+                                     "include": None, "exclude": None,
+                                     "output_dir": None, "base_name": None})()
+            ctxpack.cmd_pack(args)
+
+        json_file = tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")
+        data = json.loads(json_file.read_text())
+        assert data["budget_tokens"] == 12000
