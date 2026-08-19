@@ -233,6 +233,8 @@ The `examples/` directory holds static reference fixtures that are intentionally
 
 These defaults are applied automatically; you do not need to list them in `.ctxignore`. Custom `.ctxignore` entries are merged with these defaults and can add further exclusions.
 
+**Security boundary**: Default secret exclusions are just patterns. Explicit `.ctxignore` negation patterns (e.g., `!.env`) can override these defaults. Users should treat custom re-inclusion rules as an explicit security opt-in — the tool cannot protect against intentional overrides in project configuration files.
+
 To opt a specific secret file back in (e.g., a test fixture), add a negation pattern to `.ctxignore`:
 
 ```text

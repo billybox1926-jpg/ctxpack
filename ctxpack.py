@@ -675,6 +675,9 @@ def resolve_settings(args, config: dict) -> tuple[int, str, str]:
     if budget is None:
         budget = config.get("budget_tokens", DEFAULT_BUDGET_TOKENS)
 
+    if budget < 0:
+        raise ValueError(f"budget must be >= 0, got {budget}")
+
     output_dir = getattr(args, "output_dir", None)
     if output_dir is None:
         output_dir = config.get("output_dir", DEFAULT_OUTPUT_DIR)

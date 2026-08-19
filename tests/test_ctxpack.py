@@ -1862,6 +1862,55 @@ class TestPathPrivacy:
         assert data["root"] == str(tmp_path.resolve())
 
 
+class TestBudgetValidation:
+    """Tests for budget input validation (issue #12 follow-up).
+
+    Negative budgets must be rejected with a clear error.
+    """
+
+    def test_negative_budget_rejected(self, tmp_path):
+        """--budget -1 must raise ValueError."""
+        (tmp_path / "test.txt").write_text("hello", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type(
+                "Args",
+                (),
+                {
+                    "budget": -1,
+                    "no_config": True,
+                    "include": None,
+                    "exclude": None,
+                    "output_dir": None,
+                    "base_name": None,
+                    "show_absolute_paths": False,
+                },
+            )()
+            with pytest.raises(ValueError, match="budget must be >= 0"):
+                ctxpack.cmd_pack(args)
+
+    def test_negative_budget_large_rejected(self, tmp_path):
+        """--budget -100 must raise ValueError."""
+        (tmp_path / "test.txt").write_text("hello", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type(
+                "Args",
+                (),
+                {
+                    "budget": -100,
+                    "no_config": True,
+                    "include": None,
+                    "exclude": None,
+                    "output_dir": None,
+                    "base_name": None,
+                    "show_absolute_paths": False,
+                },
+            )()
+            with pytest.raises(ValueError, match="budget must be >= 0"):
+                ctxpack.cmd_pack(args)
+
+
 class TestTokenBudgetBoundaries:
     """Edge-case tests for very small and exact token budgets (issue #10).
 
