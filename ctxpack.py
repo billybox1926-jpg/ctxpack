@@ -9,6 +9,8 @@ ctxpack - Dependency-free repo-to-prompt pack builder.
 # both claim to support.
 from __future__ import annotations
 
+__version__ = "1.0.0"
+
 import argparse
 import fnmatch
 import json
@@ -772,6 +774,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="ctxpack - build token-budgeted context packs for AI workflows"
     )
+    parser.add_argument("--version", action="version", version=f"ctxpack {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser(
