@@ -53,9 +53,14 @@ def should_ignore(path: Path, root: Path, patterns: list[str]) -> bool:
         # Check direct match or recursive directory match
         if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(rel, pat + "/**"):
             return True
-        # Handle directory patterns explicitly
+        # Handle directory patterns explicitly (e.g., ".git/" matching ".git" dir)
         if path.is_dir() and fnmatch.fnmatch(rel + "/", pat + "/"):
             return True
+        # Handle directory patterns like ".git/**" - match the dir itself
+        if path.is_dir() and pattern.endswith("/**"):
+            dir_pattern = pattern[:-3]  # Remove "/**"
+            if fnmatch.fnmatch(rel, dir_pattern):
+                return True
         # Handle patterns like "*.log" matching anywhere in path
         if "/" not in pat and fnmatch.fnmatch(path.name, pat):
             return True
