@@ -1,5 +1,5 @@
 ```
-# Configuration and context files
-.ctxignore
-ctxpack.json
+# Context pack files
+*.context.json
+*.context.md
 ```

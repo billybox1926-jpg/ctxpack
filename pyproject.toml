@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ctxpack"
+version = "0.2.0"
+authors = [
+  { name = "Billy Box", email = "billybox1926.jpg@example.com" }
+]
+description = "Dependency-free repo-to-prompt pack builder for AI workflows"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["ai", "context", "llm", "prompt", "cli", "rag"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.scripts]
+ctxpack = "ctxpack:main"
+
+[project.optional-dependencies]
+dev = ["pytest"]
