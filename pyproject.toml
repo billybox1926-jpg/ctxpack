@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ctxpack"
 version = "0.2.0"
 authors = [
-  { name = "Billy Box", email = "billybox1926.jpg@example.com" }
+  { name = "Billy Box", email = "billybox1926@gmail.com" }
 ]
 description = "Dependency-free repo-to-prompt pack builder for AI workflows"
 readme = "README.md"
@@ -24,6 +24,12 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
+
+[project.urls]
+Homepage = "https://github.com/billybox1926-jpg/ctxpack"
+Repository = "https://github.com/billybox1926-jpg/ctxpack"
+Issues = "https://github.com/billybox1926-jpg/ctxpack/issues"
+Documentation = "https://github.com/billybox1926-jpg/ctxpack#readme"
 
 [project.scripts]
 ctxpack = "ctxpack:main"

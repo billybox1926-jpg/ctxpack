@@ -252,3 +252,39 @@ This prevents accidentally leaking local usernames, directory structures, or pro
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
+
+## Release Process
+
+### Versioning
+
+`ctxpack` uses [Semantic Versioning](https://semver.org/):
+- **MAJOR**: incompatible API changes
+- **MINOR**: backwards-compatible functionality additions
+- **PATCH**: backwards-compatible bug fixes
+
+### Building a Release
+
+```bash
+# Clean build
+rm -rf dist/
+python -m build
+
+# Verify artifacts
+twine check dist/*
+```
+
+### Release Checklist
+
+- [ ] All tests pass (`pytest -v`)
+- [ ] Lint checks pass (`ruff check .`)
+- [ ] Version bumped in `pyproject.toml`
+- [ ] CHANGELOG updated (if applicable)
+- [ ] Git tag created (`git tag v0.2.0`)
+- [ ] CI green on all jobs (test, lint, security, packaging)
+
+### CI Release Validation
+
+The `packaging` CI job validates:
+- sdist and wheel build successfully
+- CLI works after installation from wheel
+- All tests pass against installed package
