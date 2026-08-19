@@ -1,5 +1,4 @@
 ```
-# Context pack files
-*.context.json
-*.context.md
+__pycache__/
+*.pyc
 ```

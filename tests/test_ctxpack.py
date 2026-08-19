@@ -22,20 +22,21 @@ class TestLoadIgnorePatterns:
 
     def test_default_patterns_when_no_ignore_file(self, tmp_path):
         """Should return default patterns when .ctxignore doesn't exist."""
-        patterns = ctxpack.load_ignore_patterns(tmp_path)
+        patterns = ctxpack.load_ignore_patterns(tmp_path, [])
         
         assert ".git/**" in patterns
         assert "node_modules/**" in patterns
         assert "*.log" in patterns
-        assert ctxpack.OUTPUT_JSON in patterns
-        assert ctxpack.OUTPUT_MD in patterns
+        # Check for output file patterns (they use DEFAULT_BASE_NAME in v0.2.0)
+        assert f"{ctxpack.DEFAULT_BASE_NAME}.context.json" in patterns
+        assert f"{ctxpack.DEFAULT_BASE_NAME}.context.md" in patterns
 
     def test_custom_patterns_from_ignore_file(self, tmp_path):
         """Should load custom patterns from .ctxignore."""
         ignore_file = tmp_path / ctxpack.DEFAULT_IGNORE_FILE
         ignore_file.write_text("custom_pattern/\n*.tmp\n", encoding="utf-8")
         
-        patterns = ctxpack.load_ignore_patterns(tmp_path)
+        patterns = ctxpack.load_ignore_patterns(tmp_path, [])
         
         assert "custom_pattern/" in patterns
         assert "*.tmp" in patterns
@@ -45,7 +46,7 @@ class TestLoadIgnorePatterns:
         ignore_file = tmp_path / ctxpack.DEFAULT_IGNORE_FILE
         ignore_file.write_text("# This is a comment\nvalid_pattern\n", encoding="utf-8")
         
-        patterns = ctxpack.load_ignore_patterns(tmp_path)
+        patterns = ctxpack.load_ignore_patterns(tmp_path, [])
         
         assert "# This is a comment" not in patterns
         assert "valid_pattern" in patterns
@@ -55,28 +56,30 @@ class TestLoadIgnorePatterns:
         ignore_file = tmp_path / ctxpack.DEFAULT_IGNORE_FILE
         ignore_file.write_text("\n\nvalid_pattern\n\n", encoding="utf-8")
         
-        patterns = ctxpack.load_ignore_patterns(tmp_path)
+        patterns = ctxpack.load_ignore_patterns(tmp_path, [])
         
         assert "" not in patterns
         assert "valid_pattern" in patterns
 
 
-class TestShouldIgnore:
-    """Tests for should_ignore function."""
+class TestShouldProcess:
+    """Tests for should_process function (replaces should_ignore in v0.2.0)."""
 
     def test_ignore_git_directory(self, tmp_path):
         """Should ignore .git directory."""
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
-        patterns = [".git/**"]
+        include_patterns = []
+        # Use both ".git" and ".git/**" patterns to match directory and contents
+        exclude_patterns = [".git", ".git/**"]
         
-        # Test that .git directory itself is ignored
-        assert ctxpack.should_ignore(git_dir, tmp_path, patterns) is True
+        # Test that .git directory itself is ignored (relative path is ".git")
+        assert ctxpack.should_process(git_dir, tmp_path, include_patterns, exclude_patterns) is False
         
         # Also test files inside .git are ignored
         git_file = git_dir / "config"
         git_file.write_text("test")
-        assert ctxpack.should_ignore(git_file, tmp_path, patterns) is True
+        assert ctxpack.should_process(git_file, tmp_path, include_patterns, exclude_patterns) is False
 
     def test_ignore_log_files_anywhere(self, tmp_path):
         """Should ignore *.log files anywhere in the tree (bare filename pattern)."""
@@ -86,18 +89,20 @@ class TestShouldIgnore:
         log_file_root.write_text("log content")
         log_file_subdir.write_text("log content")
         
-        patterns = ["*.log"]
+        include_patterns = []
+        exclude_patterns = ["*.log"]
         
-        assert ctxpack.should_ignore(log_file_root, tmp_path, patterns) is True
-        assert ctxpack.should_ignore(log_file_subdir, tmp_path, patterns) is True
+        assert ctxpack.should_process(log_file_root, tmp_path, include_patterns, exclude_patterns) is False
+        assert ctxpack.should_process(log_file_subdir, tmp_path, include_patterns, exclude_patterns) is False
 
     def test_ignore_node_modules(self, tmp_path):
         """Should ignore node_modules directory and contents."""
         node_dir = tmp_path / "node_modules" / "package"
         node_dir.mkdir(parents=True)
-        patterns = ["node_modules/**"]
+        include_patterns = []
+        exclude_patterns = ["node_modules/**"]
         
-        assert ctxpack.should_ignore(node_dir, tmp_path, patterns) is True
+        assert ctxpack.should_process(node_dir, tmp_path, include_patterns, exclude_patterns) is False
 
     def test_dont_ignore_normal_file(self, tmp_path):
         """Should not ignore normal source files."""
@@ -105,29 +110,34 @@ class TestShouldIgnore:
         src_file.parent.mkdir()
         src_file.write_text("print('hello')")
         
-        patterns = ["*.log", "node_modules/**"]
+        include_patterns = []
+        exclude_patterns = ["*.log", "node_modules/**"]
         
-        assert ctxpack.should_ignore(src_file, tmp_path, patterns) is False
+        assert ctxpack.should_process(src_file, tmp_path, include_patterns, exclude_patterns) is True
 
     def test_ignore_pyc_files(self, tmp_path):
         """Should ignore .pyc files."""
         pyc_file = tmp_path / "module.pyc"
         pyc_file.write_text("binary")
-        patterns = ["*.pyc"]
+        include_patterns = []
+        exclude_patterns = ["*.pyc"]
         
-        assert ctxpack.should_ignore(pyc_file, tmp_path, patterns) is True
+        assert ctxpack.should_process(pyc_file, tmp_path, include_patterns, exclude_patterns) is False
 
     def test_ignore_ctxpack_outputs(self, tmp_path):
         """Should ignore ctxpack output files by default."""
-        json_output = tmp_path / ctxpack.OUTPUT_JSON
-        md_output = tmp_path / ctxpack.OUTPUT_MD
+        json_output = tmp_path / f"{ctxpack.DEFAULT_BASE_NAME}.context.json"
+        md_output = tmp_path / f"{ctxpack.DEFAULT_BASE_NAME}.context.md"
         json_output.write_text("{}")
         md_output.write_text("")
         
-        patterns = ctxpack.load_ignore_patterns(tmp_path)
+        patterns = ctxpack.load_ignore_patterns(tmp_path, [])
+        # In v0.2.0, load_ignore_patterns returns only exclude patterns
+        include_patterns = []
+        exclude_patterns = patterns
         
-        assert ctxpack.should_ignore(json_output, tmp_path, patterns) is True
-        assert ctxpack.should_ignore(md_output, tmp_path, patterns) is True
+        assert ctxpack.should_process(json_output, tmp_path, include_patterns, exclude_patterns) is False
+        assert ctxpack.should_process(md_output, tmp_path, include_patterns, exclude_patterns) is False
 
 
 class TestEstimateTokens:
@@ -209,8 +219,9 @@ class TestBuildFileInventory:
         subdir.mkdir()
         (subdir / "file3.md").write_text("# Header")
         
-        patterns = []
-        inventory = ctxpack.build_file_inventory(tmp_path, patterns)
+        include_patterns = []
+        exclude_patterns = []
+        inventory = ctxpack.build_file_inventory(tmp_path, include_patterns, exclude_patterns)
         
         assert len(inventory) == 3
         paths = [item["path"] for item in inventory]
@@ -223,8 +234,9 @@ class TestBuildFileInventory:
         (tmp_path / "good.txt").write_text("good")
         (tmp_path / "bad.log").write_text("bad")
         
-        patterns = ["*.log"]
-        inventory = ctxpack.build_file_inventory(tmp_path, patterns)
+        include_patterns = []
+        exclude_patterns = ["*.log"]
+        inventory = ctxpack.build_file_inventory(tmp_path, include_patterns, exclude_patterns)
         
         assert len(inventory) == 1
         assert inventory[0]["path"] == "good.txt"
@@ -234,8 +246,9 @@ class TestBuildFileInventory:
         (tmp_path / "text.txt").write_text("text")
         (tmp_path / "image.png").write_bytes(b"\x89PNG")
         
-        patterns = []
-        inventory = ctxpack.build_file_inventory(tmp_path, patterns)
+        include_patterns = []
+        exclude_patterns = []
+        inventory = ctxpack.build_file_inventory(tmp_path, include_patterns, exclude_patterns)
         
         assert len(inventory) == 1
         assert inventory[0]["path"] == "text.txt"
@@ -246,8 +259,9 @@ class TestBuildFileInventory:
         (tmp_path / "a.txt").write_text("a")
         (tmp_path / "m.txt").write_text("m")
         
-        patterns = []
-        inventory = ctxpack.build_file_inventory(tmp_path, patterns)
+        include_patterns = []
+        exclude_patterns = []
+        inventory = ctxpack.build_file_inventory(tmp_path, include_patterns, exclude_patterns)
         
         paths = [item["path"] for item in inventory]
         assert paths == ["a.txt", "m.txt", "z.txt"]
@@ -258,8 +272,9 @@ class TestBuildFileInventory:
         content = "Hello"
         test_file.write_text(content)
         
-        patterns = []
-        inventory = ctxpack.build_file_inventory(tmp_path, patterns)
+        include_patterns = []
+        exclude_patterns = []
+        inventory = ctxpack.build_file_inventory(tmp_path, include_patterns, exclude_patterns)
         
         assert len(inventory) == 1
         item = inventory[0]
@@ -280,10 +295,11 @@ class TestTrimToBudget:
             {"path": "b.txt", "content": "b" * 100, "tokens_estimate": 25, "size_bytes": 100}
         ]
         
-        result = ctxpack.trim_to_budget(inventory, 100)
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 100)
         
         assert len(result) == 2
         assert all(not item.get("truncated", False) for item in result)
+        assert is_incomplete is False
 
     def test_truncate_when_over_budget(self):
         """Should truncate last file when over budget."""
@@ -292,14 +308,15 @@ class TestTrimToBudget:
             {"path": "b.txt", "content": "b" * 400, "tokens_estimate": 100, "size_bytes": 400}
         ]
         
-        result = ctxpack.trim_to_budget(inventory, 50)
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 50)
         
         assert len(result) == 2
         assert result[0]["path"] == "a.txt"
         assert not result[0].get("truncated", False)
         assert result[1]["path"] == "b.txt"
         assert result[1].get("truncated", False)
-        assert "[TRUNCATED by ctxpack]" in result[1]["content"]
+        assert "[TRUNCATED by ctxpack" in result[1]["content"]
+        assert is_incomplete is True
 
     def test_stop_when_budget_exhausted(self):
         """Should stop adding files when budget is exhausted."""
@@ -309,7 +326,7 @@ class TestTrimToBudget:
             {"path": "c.txt", "content": "c" * 100, "tokens_estimate": 25, "size_bytes": 100}
         ]
         
-        result = ctxpack.trim_to_budget(inventory, 30)
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 30)
         
         # First file fits (25 tokens), second gets truncated to fit remaining budget
         assert len(result) >= 1
@@ -318,6 +335,7 @@ class TestTrimToBudget:
         total_tokens = sum(item["tokens_estimate"] for item in result)
         assert total_tokens <= 50  # Allow some overhead for truncation message
         assert result[0]["path"] == "a.txt"
+        assert is_incomplete is True
 
 
 class TestGenerateMarkdown:
@@ -326,7 +344,7 @@ class TestGenerateMarkdown:
     def test_markdown_header(self, tmp_path):
         """Should include proper header in markdown output."""
         inventory = []
-        md = ctxpack.generate_markdown(inventory, tmp_path)
+        md = ctxpack.generate_markdown(inventory, tmp_path, is_incomplete=False)
         
         assert "# ctxpack Context Pack" in md
         assert f"Generated from:" in md
@@ -343,7 +361,7 @@ class TestGenerateMarkdown:
                 "truncated": False
             }
         ]
-        md = ctxpack.generate_markdown(inventory, tmp_path)
+        md = ctxpack.generate_markdown(inventory, tmp_path, is_incomplete=False)
         
         assert "## test.txt" in md
         assert "Size: 100 bytes" in md
@@ -363,9 +381,17 @@ class TestGenerateMarkdown:
                 "truncated": True
             }
         ]
-        md = ctxpack.generate_markdown(inventory, tmp_path)
+        md = ctxpack.generate_markdown(inventory, tmp_path, is_incomplete=False)
         
         assert "⚠️ Truncated to fit token budget" in md
+
+    def test_markdown_incomplete_warning(self, tmp_path):
+        """Should include incomplete warning when budget exceeded."""
+        inventory = []
+        md = ctxpack.generate_markdown(inventory, tmp_path, is_incomplete=True)
+        
+        assert "WARNING" in md
+        assert "exceeded the budget" in md
 
 
 class TestGenerateJson:
@@ -384,13 +410,15 @@ class TestGenerateJson:
         ]
         budget = 8000
         
-        result = ctxpack.generate_json(inventory, tmp_path, budget)
+        result = ctxpack.generate_json(inventory, tmp_path, budget, is_incomplete=False)
         
         assert result["generator"] == "ctxpack"
         assert "root" in result
         assert result["budget_tokens"] == budget
         assert "files" in result
         assert len(result["files"]) == 1
+        assert "is_incomplete" in result
+        assert result["is_incomplete"] is False
 
     def test_json_file_fields(self, tmp_path):
         """Should include all required fields in file entries."""
@@ -404,7 +432,7 @@ class TestGenerateJson:
             }
         ]
         
-        result = ctxpack.generate_json(inventory, tmp_path, 8000)
+        result = ctxpack.generate_json(inventory, tmp_path, 8000, is_incomplete=False)
         file_entry = result["files"][0]
         
         assert "path" in file_entry
@@ -412,6 +440,14 @@ class TestGenerateJson:
         assert "tokens_estimate" in file_entry
         assert "truncated" in file_entry
         assert "content" in file_entry
+
+    def test_json_is_incomplete_flag(self, tmp_path):
+        """Should set is_incomplete flag when budget exceeded."""
+        inventory = []
+        
+        result = ctxpack.generate_json(inventory, tmp_path, 8000, is_incomplete=True)
+        
+        assert result["is_incomplete"] is True
 
 
 class TestCmdInit:
@@ -466,11 +502,21 @@ class TestCmdPack:
         (tmp_path / "test.txt").write_text("Hello World")
         
         with patch.object(Path, 'cwd', return_value=tmp_path):
-            args = type('Args', (), {'budget': 8000, 'no_config': True, 'budget_set': True})()
+            args = type('Args', (), {
+                'budget': 8000, 
+                'no_config': True, 
+                'budget_set': True,
+                'output_dir_set': False,
+                'base_name_set': False,
+                'include': None,
+                'exclude': None,
+                'output_dir': str(tmp_path),  # Use absolute path
+                'base_name': 'ctxpack'
+            })()
             ctxpack.cmd_pack(args)
         
-        json_file = tmp_path / ctxpack.OUTPUT_JSON
-        md_file = tmp_path / ctxpack.OUTPUT_MD
+        json_file = tmp_path / f"{ctxpack.DEFAULT_BASE_NAME}.context.json"
+        md_file = tmp_path / f"{ctxpack.DEFAULT_BASE_NAME}.context.md"
         
         assert json_file.exists()
         assert md_file.exists()
@@ -490,10 +536,20 @@ class TestCmdPack:
         (tmp_path / "file2.txt").write_text("b" * 1000)
         
         with patch.object(Path, 'cwd', return_value=tmp_path):
-            args = type('Args', (), {'budget': 100, 'no_config': True, 'budget_set': True})()
+            args = type('Args', (), {
+                'budget': 100, 
+                'no_config': True, 
+                'budget_set': True,
+                'output_dir_set': False,
+                'base_name_set': False,
+                'include': None,
+                'exclude': None,
+                'output_dir': str(tmp_path),  # Use absolute path
+                'base_name': 'ctxpack'
+            })()
             ctxpack.cmd_pack(args)
         
-        json_file = tmp_path / ctxpack.OUTPUT_JSON
+        json_file = tmp_path / f"{ctxpack.DEFAULT_BASE_NAME}.context.json"
         data = json.loads(json_file.read_text())
         
         assert data["budget_tokens"] == 100
@@ -509,10 +565,20 @@ class TestCmdPack:
         (tmp_path / "test.txt").write_text("content")
         
         with patch.object(Path, 'cwd', return_value=tmp_path):
-            args = type('Args', (), {'budget': 8000, 'no_config': False, 'budget_set': False})()
+            args = type('Args', (), {
+                'budget': 8000, 
+                'no_config': False, 
+                'budget_set': False,
+                'output_dir_set': False,
+                'base_name_set': False,
+                'include': None,
+                'exclude': None,
+                'output_dir': str(tmp_path),  # Use absolute path
+                'base_name': 'ctxpack'
+            })()
             ctxpack.cmd_pack(args)
         
-        json_file = tmp_path / ctxpack.OUTPUT_JSON
+        json_file = tmp_path / f"{ctxpack.DEFAULT_BASE_NAME}.context.json"
         data = json.loads(json_file.read_text())
         
         assert data["budget_tokens"] == 5000
@@ -528,10 +594,20 @@ class TestCmdPack:
         (tmp_path / "test.txt").write_text("content")
         
         with patch.object(Path, 'cwd', return_value=tmp_path):
-            args = type('Args', (), {'budget': 3000, 'no_config': True, 'budget_set': True})()
+            args = type('Args', (), {
+                'budget': 3000, 
+                'no_config': True, 
+                'budget_set': True,
+                'output_dir_set': False,
+                'base_name_set': False,
+                'include': None,
+                'exclude': None,
+                'output_dir': str(tmp_path),  # Use absolute path
+                'base_name': 'ctxpack'
+            })()
             ctxpack.cmd_pack(args)
         
-        json_file = tmp_path / ctxpack.OUTPUT_JSON
+        json_file = tmp_path / f"{ctxpack.DEFAULT_BASE_NAME}.context.json"
         data = json.loads(json_file.read_text())
         
         # Should use CLI budget, not config budget
@@ -558,12 +634,22 @@ class TestIntegration:
         
         # Pack with custom budget
         with patch.object(Path, 'cwd', return_value=tmp_path):
-            pack_args = type('Args', (), {'budget': 500, 'no_config': True, 'budget_set': True})()
+            pack_args = type('Args', (), {
+                'budget': 500, 
+                'no_config': True, 
+                'budget_set': True,
+                'output_dir_set': False,
+                'base_name_set': False,
+                'include': None,
+                'exclude': None,
+                'output_dir': str(tmp_path),  # Use absolute path
+                'base_name': 'ctxpack'
+            })()
             ctxpack.cmd_pack(pack_args)
         
         # Verify outputs
-        json_file = tmp_path / ctxpack.OUTPUT_JSON
-        md_file = tmp_path / ctxpack.OUTPUT_JSON
+        json_file = tmp_path / f"{ctxpack.DEFAULT_BASE_NAME}.context.json"
+        md_file = tmp_path / f"{ctxpack.DEFAULT_BASE_NAME}.context.md"
         
         assert json_file.exists()
         assert md_file.exists()
@@ -587,10 +673,20 @@ class TestIntegration:
         (venv_dir / "site-packages.py").write_text("venv code")
         
         with patch.object(Path, 'cwd', return_value=tmp_path):
-            args = type('Args', (), {'budget': 10000, 'no_config': True, 'budget_set': True})()
+            args = type('Args', (), {
+                'budget': 10000, 
+                'no_config': True, 
+                'budget_set': True,
+                'output_dir_set': False,
+                'base_name_set': False,
+                'include': None,
+                'exclude': None,
+                'output_dir': str(tmp_path),  # Use absolute path
+                'base_name': 'ctxpack'
+            })()
             ctxpack.cmd_pack(args)
         
-        json_file = tmp_path / ctxpack.OUTPUT_JSON
+        json_file = tmp_path / f"{ctxpack.DEFAULT_BASE_NAME}.context.json"
         data = json.loads(json_file.read_text())
         
         paths = [f["path"] for f in data["files"]]
