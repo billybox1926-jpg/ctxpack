@@ -148,6 +148,49 @@ This ensures:
 - Code with many symbols, non-English text, or unusual formatting may have different actual token counts
 - For critical workflows, verify actual token usage with your target model's tokenizer
 
+## Generated Artifacts: To Commit or Not?
+
+**Short answer:** Generally **no**. Generated `*.context.*` files are ephemeral artifacts meant for immediate use, not long-term storage.
+
+### Recommended practice
+
+- ❌ **Do not commit** `*.context.json` or `*.context.md` files to your repository
+- ✅ **Do add** them to `.gitignore` (they're already in the default template from `ctxpack init`)
+- ✅ **Do regenerate** them fresh whenever you need to share context with an LLM
+
+### Why not commit generated packs?
+
+1. **Stale content**: Context packs become outdated as soon as your code changes
+2. **Noise in history**: Frequent regeneration creates churn in git history
+3. **Repository bloat**: Large context packs can significantly increase repo size
+4. **False sense of accuracy**: Old packs may misrepresent current project state
+
+### When might you commit a pack?
+
+Rare exceptions where committing *might* make sense:
+
+- 📦 **Release artifacts**: Including a context pack with a tagged release to capture exact state at release time
+- 🔍 **Debugging aid**: Committing a specific pack to help reproduce and debug an issue
+- 📚 **Documentation example**: Sample packs in `examples/` directories (like this repo's `examples/sample.context.*`)
+
+If you do commit a generated pack, consider:
+- Adding a timestamp/generation note in comments
+- Using git LFS for large files
+- Setting up automated cleanup for stale packs
+
+### Default behavior
+
+The `ctxpack init` command adds these patterns to your `.gitignore`:
+```text
+# Generated context packs (ephemeral artifacts)
+*.context.json
+*.context.md
+```
+
+This keeps your repository clean while allowing you to generate fresh packs on demand.
+
+---
+
 ## Output Examples
 
 See the [`examples/`](./examples/) directory for sample outputs:
