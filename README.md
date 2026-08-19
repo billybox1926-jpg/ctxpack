@@ -55,47 +55,48 @@ python ctxpack.py pack --no-config --budget 4000
 
 ### `.ctxignore`
 
-Uses a **documented subset of gitignore-style patterns**. Lines starting with `#` are comments.
+Uses ctxignore patterns — a tested subset of gitignore syntax. Lines starting with `#` are comments. Blank lines are ignored.
 
-**Supported pattern semantics:**
+**Supported pattern types:**
 
-| Pattern | Description | Example |
-|---------|-------------|---------|
-| `*.ext` | Bare patterns match by filename anywhere in tree | `*.log` matches all `.log` files |
-| `dir/**` | Matches directory and all contents recursively | `node_modules/**` |
-| `**/*.ext` | Recursive match from any depth (including root) | `**/*.log` |
-| `/pattern` | Leading `/` is stripped; treated as bare pattern | `/test.log` = `test.log` |
-| `pattern/` | Trailing `/` stripped; matches dir and contents | `.git/` |
-| `!pattern` | Negation: re-includes previously excluded files | `!.env.example` |
+| Pattern | Matches | Example |
+|---------|---------|---------|
+| `foo` | Exact path at any depth | `build/` matches `build/`, `src/build/` |
+| `foo/` | Directory and everything inside | `venv/` skips `venv/lib/x.py` |
+| `foo/**` | Directory and everything inside | `node_modules/**` skips `node_modules/pkg/x.js` |
+| `*.ext` | Files with extension at any depth | `*.log` skips `debug.log` and `logs/debug.log` |
+| `/foo` | Exact path at the scan root only | `/build/` skips `build/` but NOT `src/build/` |
+| `**` | Spans path segments | `**/.aws/**` skips `.aws/` and `nested/.aws/` |
+| `!foo` | Negation — re-includes a previous exclusion | `*.pem` then `!fixture.pem` |
+| `\*`, `\[`, etc. | Escaped wildcard/bracket (literal) | `file\*.txt` matches the literal `file*.txt` |
 
-**Documented limitations (not full gitignore compatibility):**
-- Leading `/` does not strictly anchor to root (stripped for matching)
-- No support for escaped patterns (e.g., `\!important.txt`)
-- No directory-only patterns that exclude files with same name
+**Pattern precedence:** Patterns are processed in order. The last matching pattern wins — so `!foo` can override an earlier `foo`.
+
+**Include vs. exclude:** `--include` patterns restrict to specific files. `--exclude` patterns remove files. Excludes always override includes.
+
+**Not supported:** Character classes (`[...]`), trailing whitespace significance, or full regex.
 
 ```text
 # Ignore virtual environments
 venv/
+.venv/
 
-# Ignore all log files (anywhere in tree)
+# Ignore build artifacts at the root only
+/build/
+/dist/
+
+# Ignore all log files anywhere
 *.log
 
-# Ignore specific directory and contents
-node_modules/**
+# But keep the main log file
+!important.log
 
-# Secret-bearing files are excluded by default for security:
-# .env, .env.*, *.pem, *.key, *.p12, *.pfx
-
-# Re-include template env files using negation
+# Allow template env files
 !.env.example
 ```
 
-**Default secret exclusions:** ctxpack excludes the following secret-bearing files by default:
-- `.env` — environment variable files
-- `.env.*` — environment variants (e.g., `.env.local`, `.env.production`)
-- `!.env.example` — template files are explicitly allowed via negation
-- `*.pem`, `*.key` — private keys and certificates
-- `*.p12`, `*.pfx` — PKCS#12 certificate bundles
+**Default secret exclusions:** ctxpack excludes these by default (not shown in generated `.ctxignore`):
+`.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.crt`, `*.cer`, `*.jks`, `*.keystore`, `*.gpg`, `*.asc`, `**/.aws/**`, `**/.ssh/**`, `**/.netrc`, `**/.npmrc`, `**/.pypirc`
 
 ### `ctxpack.json`
 Optional configuration file. Created via `python ctxpack.py init`.

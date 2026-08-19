@@ -248,19 +248,16 @@ class TestMatchesPatternSemantics:
         assert ctxpack.should_process(git_dir / "config", tmp_path, [], patterns) is False
 
     def test_anchored_pattern_behavior(self, tmp_path):
-        """Leading / anchors patterns to root (documented limitation)."""
-        # Note: ctxpack currently treats /foo same as foo for simplicity
-        # This is a documented deviation from full gitignore semantics
-        (tmp_path / "test.log").write_text("x")
+        """Leading / anchors patterns to the scan root (fixture for issue #6)."""
+        (tmp_path / "test.log").write_text("x", encoding="utf-8")
         (tmp_path / "subdir").mkdir()
-        (tmp_path / "subdir" / "test.log").write_text("x")
-        
-        # Leading / is stripped, so /test.log behaves like test.log
+        (tmp_path / "subdir" / "test.log").write_text("x", encoding="utf-8")
+
+        # Leading / means "match at the scan root only."
         patterns = ["/test.log"]
-        
-        # Both match because leading / is not strictly enforced
+
         assert ctxpack.should_process(tmp_path / "test.log", tmp_path, [], patterns) is False
-        assert ctxpack.should_process(tmp_path / "subdir" / "test.log", tmp_path, [], patterns) is False
+        assert ctxpack.should_process(tmp_path / "subdir" / "test.log", tmp_path, [], patterns) is True
 
     def test_negation_pattern_reincludes(self, tmp_path):
         """!pattern re-includes previously excluded files."""
@@ -1106,3 +1103,150 @@ class TestSecretSafeDefaults:
         paths = [f["path"] for f in data["files"]]
         assert "fixture.pem" in paths
         assert "real.pem" not in paths
+
+
+class TestIgnoreSemantics:
+    """Regression tests for ctxignore pattern semantics (issue #6).
+
+    These tests define the supported subset of gitignore semantics and
+    ensure the implementation matches exactly what the documentation
+    promises.
+    """
+
+    # === Negation patterns ===
+
+    def test_negation_after_exclusion(self):
+        """`!foo` must override a previous `foo` pattern."""
+        # should_process processes patterns in order
+        exclude = ["*.pem", "!fixture.pem"]
+        assert ctxpack.should_process(
+            Path("/fake/fixture.pem"), Path("/fake"), [], exclude) is True
+        assert ctxpack.should_process(
+            Path("/fake/real.pem"), Path("/fake"), [], exclude) is False
+
+    def test_negation_after_anchor(self):
+        """Negation should override anchored exclusions too."""
+        exclude = ["/build", "!build"]
+        assert ctxpack.should_process(
+            Path("/fake/build"), Path("/fake"), [], exclude) is True
+
+    def test_negation_does_not_affect_other_files(self):
+        """A negation must only re-include its specific target."""
+        exclude = ["*.pem", "!fixture.pem"]
+        assert ctxpack.should_process(
+            Path("/fake/other.key"), Path("/fake"), [], exclude) is True  # not *.pem
+
+    # === Anchored patterns ===
+
+    def test_anchored_matches_at_root(self):
+        """`/foo` matches only at the scan root."""
+        assert ctxpack.matches_pattern("build", "build", "/build") is True
+        assert ctxpack.matches_pattern("src/build", "build", "/build") is False
+
+    def test_anchored_does_not_match_nested(self):
+        """`/foo` must not match `nested/foo`."""
+        assert ctxpack.matches_pattern("deep/nested/foo.txt", "foo.txt", "/foo.txt") is False
+
+    def test_non_anchored_matches_anywhere(self):
+        """A pattern without leading `/` matches at any depth."""
+        assert ctxpack.matches_pattern("foo.txt", "foo.txt", "foo.txt") is True
+        assert ctxpack.matches_pattern("dir/foo.txt", "foo.txt", "foo.txt") is True
+        assert ctxpack.matches_pattern("deep/foo.txt", "foo.txt", "foo.txt") is True
+
+    # === Directory-only patterns ===
+
+    def test_directory_slash_matches_contents(self):
+        """`foo/` matches the directory and everything inside it."""
+        assert ctxpack.matches_pattern("venv/lib/x.py", "x.py", "venv/") is True
+
+    def test_directory_slash_matches_directory_itself(self):
+        """`foo/` must match the directory itself."""
+        assert ctxpack.matches_pattern("venv", "venv", "venv/") is True
+
+    def test_directory_glob_matches_contents(self):
+        """`foo/**` matches the directory and everything inside it."""
+        assert ctxpack.matches_pattern("node_modules/pkg/x.js", "x.js", "node_modules/**") is True
+
+    def test_directory_glob_matches_directory_itself(self):
+        """`foo/**` must match the directory itself."""
+        assert ctxpack.matches_pattern("node_modules", "node_modules", "node_modules/**") is True
+
+    # === `**` recursive glob ===
+
+    def test_double_star_matches_any_depth(self):
+        """`**` spans any number of path segments."""
+        assert ctxpack.matches_pattern("a/b/c/x", "x", "**/x") is True
+        assert ctxpack.matches_pattern("x", "x", "**/x") is True
+        assert ctxpack.matches_pattern("a/x", "x", "**/x") is True
+
+    def test_double_star_dir_anchored_to_root(self):
+        """`**/.aws/**` matches at the scan root."""
+        assert ctxpack.matches_pattern(".aws/credentials", "credentials", "**/.aws/**") is True
+        assert ctxpack.matches_pattern("nested/.aws/credentials", "credentials", "**/.aws/**") is True
+
+    def test_double_star_dir_directory_itself(self):
+        """`**/.dir/**` matches the directory itself."""
+        assert ctxpack.matches_pattern(".aws", ".aws", "**/.aws/**") is True
+
+    def test_double_star_middle(self):
+        """`**` in the middle of a pattern spans segments."""
+        assert ctxpack.matches_pattern("a/b/c", "c", "a/**/c") is True
+
+    # === Pattern precedence ===
+
+    def test_last_matching_pattern_wins(self):
+        """The last matching pattern determines inclusion."""
+        exclude = ["*.txt", "!secret.txt"]
+        assert ctxpack.should_process(
+            Path("/fake/secret.txt"), Path("/fake"), [], exclude) is True
+        assert ctxpack.should_process(
+            Path("/fake/other.txt"), Path("/fake"), [], exclude) is False
+
+    def test_exclusion_overrides_include(self):
+        """Excludes take precedence over includes."""
+        include = ["*.txt"]
+        exclude = ["secret.txt"]
+        assert ctxpack.should_process(
+            Path("/fake/secret.txt"), Path("/fake"), include, exclude) is False
+
+    def test_include_restriction(self):
+        """Without matching include patterns, the file is excluded."""
+        include = ["*.py"]
+        exclude = []
+        assert ctxpack.should_process(
+            Path("/fake/script.py"), Path("/fake"), include, exclude) is True
+        assert ctxpack.should_process(
+            Path("/fake/readme.md"), Path("/fake"), include, exclude) is False
+
+    # === Root-relative vs basename matching ===
+
+    def test_bare_filename_matches_anywhere(self):
+        """A bare filename matches at any depth."""
+        assert ctxpack.matches_pattern("debug.log", "debug.log", "*.log") is True
+        assert ctxpack.matches_pattern("logs/debug.log", "debug.log", "*.log") is True
+
+    def test_bare_filename_does_not_match_directory(self):
+        """A bare filename pattern should not match a directory."""
+        assert ctxpack.matches_pattern("log", "log", "*.log") is False
+
+    # === Escaped patterns ===
+
+    def test_escaped_asterisk(self):
+        """`\\*` matches a literal `*` character."""
+        assert ctxpack.matches_pattern("file*.txt", "file*.txt", r"file\*.txt") is True
+        assert ctxpack.matches_pattern("fileX.txt", "fileX.txt", r"file\*.txt") is False
+
+    def test_escaped_bracket(self):
+        """`\\[` matches a literal `[` character."""
+        assert ctxpack.matches_pattern("[foo]", "[foo]", r"\[foo\]") is True
+        assert ctxpack.matches_pattern("foo", "foo", r"\[foo\]") is False
+
+    def test_escaped_space(self):
+        """`\\ ` matches a literal space character."""
+        assert ctxpack.matches_pattern("my file.txt", "my file.txt", r"my\ file.txt") is True
+        assert ctxpack.matches_pattern("myfile.txt", "myfile.txt", r"my\ file.txt") is False
+
+    def test_escaped_backslash(self):
+        """`\\\\` matches a literal `\\` character."""
+        assert ctxpack.matches_pattern("file\\name", "file\\name", r"file\\name") is True
+        assert ctxpack.matches_pattern("filename", "filename", r"file\\name") is False

@@ -94,66 +94,129 @@ def load_ignore_patterns(root: Path, cli_exclude: list[str]) -> list[str]:
     patterns.extend(cli_exclude)
     return patterns
 
-def matches_pattern(rel: str, name: str, pattern: str) -> bool:
-    """Check if a path matches a gitignore-style pattern.
+def _unescape_for_regex(pattern: str) -> str | None:
+    r"""Convert a ctxignore pattern directly to a regex string.
 
-    Supports `**` as a wildcard spanning path segments, so `**/.aws/**`
-    matches `.aws/credentials` at the root of the scanned directory
-    as well as nested paths.
+    Processes backslash escapes so that ``\*`` matches literal ``*``,
+    ``\?`` matches literal ``?``, etc. Then converts wildcards to regex
+    syntax.
+
+    Returns None if the pattern has no backslash escapes, signaling the
+    caller to use the faster fnmatch path.
     """
+    if "\\" not in pattern:
+        return None
+    regex = []
+    i = 0
     pat = pattern.rstrip("/")
-    
-    # Handle ** in patterns first (most general case)
-    if "**" in pat:
-        # Convert gitignore-style ** to regex
-        # ** matches zero or more directory components
-        regex_pat = re.escape(pat)
-        regex_pat = regex_pat.replace(r"\*\*", ".*")  # ** -> .*
-        regex_pat = regex_pat.replace(r"\*", "[^/]*")  # * -> [^/]*
-        regex = "^" + regex_pat + "$"
-        if re.match(regex, rel):
-            return True
-        
-        # For patterns like **/*.ext, also allow matching at root level
-        # where ** matches zero directories
-        if pat.startswith("**/"):
-            suffix = pat[3:]  # Remove **/
-            # Try matching the suffix as a bare pattern
-            if "/" not in suffix:
-                # It's just a filename pattern like *.log
-                if fnmatch.fnmatch(name, suffix):
+    while i < len(pat):
+        ch = pat[i]
+        if ch == "\\" and i + 1 < len(pat):
+            next_ch = pat[i + 1]
+            if next_ch in "*?[] \\":
+                regex.append(re.escape(next_ch))
+                i += 2
+                continue
+        if ch == "*" and i + 1 < len(pat) and pat[i + 1] == "*":
+            regex.append(".*")
+            i += 2
+        elif ch == "*":
+            regex.append("[^/]*")
+            i += 1
+        elif ch == "?":
+            regex.append("[^/]")
+            i += 1
+        else:
+            regex.append(re.escape(ch))
+            i += 1
+    return "^" + "".join(regex) + "$"
+
+
+def matches_pattern(rel: str, name: str, pattern: str) -> bool:
+    """Check if a path matches a ctxignore pattern.
+
+    Supports a tested subset of gitignore semantics:
+
+    - Exact match: ``foo`` matches the path ``foo`` anywhere.
+    - Bare-wildcard: ``*.log`` matches any ``*.log`` in any directory.
+    - Anchored: a leading ``/`` anchors the pattern to the scan root.
+      ``/build`` matches ``build`` at root but not ``src/build``.
+    - Directory match: ``foo/`` matches the ``foo`` directory and everything
+      inside it.
+    - Recursive glob: ``**`` spans path segments. ``**/.aws/**`` matches
+      ``.aws/x`` and ``nested/.aws/x``.
+    - Negation: ``!``-prefixed patterns (handled by ``should_process``).
+    - Escape: ``\\`` escapes the next character (``\\*``, ``\\?``, ``[``,
+      ``]``, space, ``\\``).
+
+    Not supported (and treated as literal characters where escaped):
+
+    - Character classes ``[...]``
+    - Trailing-whitespace significance
+    """
+    # Anchored patterns start with / and must match at the scan root.
+    anchored = pattern.startswith("/")
+    pattern_body = pattern.lstrip("/") if anchored else pattern
+
+    pat = pattern_body.rstrip("/")
+
+    # After unescaping, escape any remaining literal brackets for fnmatch,
+    # which treats unescaped '[' as the start of a character class.
+    pat_fnmatch = pat.replace("[", r"\[").replace("]", r"\]")
+
+    # If the pattern has a backslash escape, the fnmatch path can't handle
+    # it correctly (fnmatch treats `\[` as start of character class), so
+    # fall through to the regex path immediately.
+    has_escape = "\\" in pat
+
+    if not has_escape:
+        # For anchored patterns, we must match rel from its start (no prefix).
+        if anchored:
+            if fnmatch.fnmatch(rel, pat_fnmatch):
+                return True
+            if pat_fnmatch.endswith("/**"):
+                base = pat_fnmatch[:-3]
+                if fnmatch.fnmatch(rel, base) or rel.startswith(base + "/"):
                     return True
-    
-    # Exact relative path match
-    if fnmatch.fnmatch(rel, pat):
-        return True
-    
-    # Recursive directory match (e.g., ".git/config" matching ".git/**")
-    if fnmatch.fnmatch(rel, pat + "/**"):
-        return True
-    
-    # A "dir/**" pattern must also match the directory itself and its contents
-    if pat.endswith("/**"):
-        base = pat[:-3]
-        if fnmatch.fnmatch(rel, base) or rel.startswith(base + "/"):
+            if "**" in pat_fnmatch:
+                regex = _unescape_for_regex(pattern_body)
+                if regex and re.match(regex, rel):
+                    return True
+            return False
+
+        # Non-anchored: original behavior.
+        # Exact match (for directories like ".git" matching pattern ".git/**")
+        if fnmatch.fnmatch(rel, pat_fnmatch):
             return True
-    
-    # Bare filename match (e.g., "*.log") - matches anywhere in tree
-    # Only do this if pattern has no path separators (after stripping leading /)
-    pat_clean = pat.lstrip("/")
-    if "/" not in pat_clean:
-        if fnmatch.fnmatch(name, pat_clean):
+        # Recursive directory match (e.g., ".git/config" matching ".git/**")
+        if fnmatch.fnmatch(rel, pat_fnmatch + "/**"):
             return True
-    
-    # Pattern with slash: match against full relative path
-    if "/" in pat_clean:
-        if fnmatch.fnmatch(rel, pat_clean):
+        # A "dir/**" pattern must also match the directory itself, otherwise
+        # os.walk still descends into .git / node_modules / __pycache__ and only
+        # their contents get filtered.
+        if pat_fnmatch.endswith("/**"):
+            base = pat_fnmatch[:-3]
+            if fnmatch.fnmatch(rel, base) or rel.startswith(base + "/"):
+                return True
+        # Bare filename match (e.g., "*.log")
+        if fnmatch.fnmatch(name, pat_fnmatch):
+            return True
+
+    # Handle ** in the middle of paths (regex fallback)
+    # Also handles backslash-escaped patterns (when has_escape is True)
+    if has_escape or "**" in pat:
+        regex = _unescape_for_regex(pattern_body)
+        if regex is None:
+            regex = "^" + re.escape(pat).replace(r"\*\*", ".*").replace(r"\*", "[^/]*") + "$"
+        if re.match(regex, rel):
             return True
         # `**/` at the start must also match at the root of the tree,
         # not just nested paths. Strip it and retry.
         if pat.startswith("**/"):
             stripped = pat[3:]
-            stripped_regex = "^" + re.escape(stripped).replace(r"\*\*", ".*").replace(r"\*", "[^/]*") + "$"
+            stripped_regex = _unescape_for_regex(stripped)
+            if stripped_regex is None:
+                stripped_regex = "^" + re.escape(stripped).replace(r"\*\*", ".*").replace(r"\*", "[^/]*") + "$"
             if re.match(stripped_regex, rel):
                 return True
             # Also match the directory itself for `**/.dir/**` patterns.
