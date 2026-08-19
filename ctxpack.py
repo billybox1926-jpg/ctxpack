@@ -183,7 +183,25 @@ def should_process(path: Path, root: Path, include_patterns: list[str], exclude_
     return False
 
 def estimate_tokens(text: str) -> int:
-    """Very rough token estimate: ~4 chars per token."""
+    """Estimate token count for text content.
+    
+    Uses a simple heuristic of ~4 characters per token, which approximates
+    typical LLM tokenization for English text and code. This is a rough
+    estimate intended for budgeting purposes, not an exact count.
+    
+    Edge cases:
+    - Empty strings return 0 tokens (no content = no tokens)
+    - Very short strings (< 4 chars) return 1 token to avoid zero estimates
+    - The truncation marker accounts for its own token cost
+    
+    Args:
+        text: The text content to estimate tokens for
+        
+    Returns:
+        Estimated token count (minimum 1 for non-empty text, 0 for empty)
+    """
+    if not text:
+        return 0
     return max(1, len(text) // 4)
 
 def looks_binary(path: Path, probe_bytes: int = 8192) -> bool:

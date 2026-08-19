@@ -315,11 +315,26 @@ class TestEstimateTokens:
         
         assert tokens >= 1
 
-    def test_empty_string(self):
-        """Should handle empty string."""
+    def test_empty_string_returns_zero(self):
+        """Should return 0 tokens for empty string (no content = no tokens)."""
         tokens = ctxpack.estimate_tokens("")
         
-        assert tokens == 1  # max(1, 0 // 4) = 1
+        assert tokens == 0
+
+    def test_very_short_strings(self):
+        """Should handle very short strings correctly."""
+        assert ctxpack.estimate_tokens("a") == 1      # 1 char -> 1 token
+        assert ctxpack.estimate_tokens("abc") == 1    # 3 chars -> 1 token
+        assert ctxpack.estimate_tokens("abcd") == 1   # 4 chars -> 1 token
+        assert ctxpack.estimate_tokens("abcde") == 1  # 5 chars -> 1 token
+        
+    def test_token_boundaries(self):
+        """Test behavior at token boundaries (multiples of 4)."""
+        assert ctxpack.estimate_tokens("") == 0       # 0 chars -> 0 tokens
+        assert ctxpack.estimate_tokens("abcd") == 1   # 4 chars -> 1 token
+        assert ctxpack.estimate_tokens("abcdefgh") == 2  # 8 chars -> 2 tokens
+        assert ctxpack.estimate_tokens("a" * 12) == 3 # 12 chars -> 3 tokens
+        assert ctxpack.estimate_tokens("a" * 100) == 25  # 100 chars -> 25 tokens
 
 
 class TestReadTextFile:
