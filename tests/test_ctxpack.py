@@ -180,6 +180,124 @@ class TestShouldIgnore:
         assert ctxpack.should_process(pfx_file, tmp_path, [], patterns) is False
 
 
+class TestMatchesPatternSemantics:
+    """Tests for gitignore-style pattern matching semantics.
+    
+    These tests document and verify the exact subset of gitignore semantics
+    that ctxpack supports. See README.md for user-facing documentation.
+    """
+
+    def test_bare_pattern_matches_filename_anywhere(self, tmp_path):
+        """Bare patterns like *.log match by filename anywhere in tree."""
+        # Create files at different depths
+        (tmp_path / "test.log").write_text("x")
+        (tmp_path / "subdir").mkdir()
+        (tmp_path / "subdir" / "test.log").write_text("x")
+        (tmp_path / "a" / "b" / "c").mkdir(parents=True)
+        (tmp_path / "a" / "b" / "c" / "test.log").write_text("x")
+        
+        patterns = ["*.log"]
+        
+        # Should match at all levels
+        assert ctxpack.should_process(tmp_path / "test.log", tmp_path, [], patterns) is False
+        assert ctxpack.should_process(tmp_path / "subdir" / "test.log", tmp_path, [], patterns) is False
+        assert ctxpack.should_process(tmp_path / "a" / "b" / "c" / "test.log", tmp_path, [], patterns) is False
+
+    def test_doublestar_recursive_match(self, tmp_path):
+        """**/*.ext patterns match files recursively."""
+        (tmp_path / "test.log").write_text("x")
+        (tmp_path / "subdir").mkdir()
+        (tmp_path / "subdir" / "test.log").write_text("x")
+        (tmp_path / "a" / "b" / "c").mkdir(parents=True)
+        (tmp_path / "a" / "b" / "c" / "test.log").write_text("x")
+        
+        patterns = ["**/*.log"]
+        
+        # ** matches zero or more directory levels
+        assert ctxpack.should_process(tmp_path / "test.log", tmp_path, [], patterns) is False
+        assert ctxpack.should_process(tmp_path / "subdir" / "test.log", tmp_path, [], patterns) is False
+        assert ctxpack.should_process(tmp_path / "a" / "b" / "c" / "test.log", tmp_path, [], patterns) is False
+
+    def test_dir_doublestar_matches_dir_and_contents(self, tmp_path):
+        """dir/** matches the directory itself and all contents."""
+        node_dir = tmp_path / "node_modules"
+        node_dir.mkdir()
+        (node_dir / "pkg.js").write_text("x")
+        (node_dir / "subpkg").mkdir()
+        (node_dir / "subpkg" / "index.js").write_text("x")
+        
+        patterns = ["node_modules/**"]
+        
+        # Directory itself should be ignored
+        assert ctxpack.should_process(node_dir, tmp_path, [], patterns) is False
+        # Files inside should be ignored
+        assert ctxpack.should_process(node_dir / "pkg.js", tmp_path, [], patterns) is False
+        assert ctxpack.should_process(node_dir / "subpkg" / "index.js", tmp_path, [], patterns) is False
+
+    def test_trailing_slash_directory_pattern(self, tmp_path):
+        """Patterns with trailing / match directories and their contents."""
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "config").write_text("x")
+        
+        patterns = [".git/"]
+        
+        # Directory itself should be ignored
+        assert ctxpack.should_process(git_dir, tmp_path, [], patterns) is False
+        # Files inside should be ignored
+        assert ctxpack.should_process(git_dir / "config", tmp_path, [], patterns) is False
+
+    def test_anchored_pattern_behavior(self, tmp_path):
+        """Leading / anchors patterns to root (documented limitation)."""
+        # Note: ctxpack currently treats /foo same as foo for simplicity
+        # This is a documented deviation from full gitignore semantics
+        (tmp_path / "test.log").write_text("x")
+        (tmp_path / "subdir").mkdir()
+        (tmp_path / "subdir" / "test.log").write_text("x")
+        
+        # Leading / is stripped, so /test.log behaves like test.log
+        patterns = ["/test.log"]
+        
+        # Both match because leading / is not strictly enforced
+        assert ctxpack.should_process(tmp_path / "test.log", tmp_path, [], patterns) is False
+        assert ctxpack.should_process(tmp_path / "subdir" / "test.log", tmp_path, [], patterns) is False
+
+    def test_negation_pattern_reincludes(self, tmp_path):
+        """!pattern re-includes previously excluded files."""
+        env_file = tmp_path / ".env"
+        env_local = tmp_path / ".env.local"
+        env_example = tmp_path / ".env.example"
+        
+        env_file.write_text("SECRET=x")
+        env_local.write_text("SECRET=y")
+        env_example.write_text("SECRET_TEMPLATE=z")
+        
+        # .env and .env.* are excluded, but !.env.example re-includes
+        patterns = [".env", ".env.*", "!.env.example"]
+        
+        assert ctxpack.should_process(env_file, tmp_path, [], patterns) is False
+        assert ctxpack.should_process(env_local, tmp_path, [], patterns) is False
+        # Re-included by negation pattern
+        assert ctxpack.should_process(env_example, tmp_path, [], patterns) is True
+
+    def test_pattern_precedence_order(self, tmp_path):
+        """Patterns are processed in order; later patterns can override earlier."""
+        test_file = tmp_path / "special.log"
+        test_file.write_text("x")
+        
+        # First exclude all .log, then re-include special.log
+        patterns = ["*.log", "!special.log"]
+        
+        assert ctxpack.should_process(test_file, tmp_path, [], patterns) is True
+        
+        # Reverse order: first include, then exclude
+        patterns2 = ["!special.log", "*.log"]
+        
+        # special.log doesn't match *.log initially, so negation has no effect,
+        # then *.log excludes it
+        assert ctxpack.should_process(test_file, tmp_path, [], patterns2) is False
+
+
 class TestEstimateTokens:
     """Tests for estimate_tokens function."""
 

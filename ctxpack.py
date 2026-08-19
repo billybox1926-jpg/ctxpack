@@ -102,26 +102,52 @@ def matches_pattern(rel: str, name: str, pattern: str) -> bool:
     as well as nested paths.
     """
     pat = pattern.rstrip("/")
-    # Exact match (for directories like ".git" matching pattern ".git/**")
+    
+    # Handle ** in patterns first (most general case)
+    if "**" in pat:
+        # Convert gitignore-style ** to regex
+        # ** matches zero or more directory components
+        regex_pat = re.escape(pat)
+        regex_pat = regex_pat.replace(r"\*\*", ".*")  # ** -> .*
+        regex_pat = regex_pat.replace(r"\*", "[^/]*")  # * -> [^/]*
+        regex = "^" + regex_pat + "$"
+        if re.match(regex, rel):
+            return True
+        
+        # For patterns like **/*.ext, also allow matching at root level
+        # where ** matches zero directories
+        if pat.startswith("**/"):
+            suffix = pat[3:]  # Remove **/
+            # Try matching the suffix as a bare pattern
+            if "/" not in suffix:
+                # It's just a filename pattern like *.log
+                if fnmatch.fnmatch(name, suffix):
+                    return True
+    
+    # Exact relative path match
     if fnmatch.fnmatch(rel, pat):
         return True
+    
     # Recursive directory match (e.g., ".git/config" matching ".git/**")
     if fnmatch.fnmatch(rel, pat + "/**"):
         return True
-    # A "dir/**" pattern must also match the directory itself, otherwise
-    # os.walk still descends into .git / node_modules / __pycache__ and only
-    # their contents get filtered.
+    
+    # A "dir/**" pattern must also match the directory itself and its contents
     if pat.endswith("/**"):
         base = pat[:-3]
         if fnmatch.fnmatch(rel, base) or rel.startswith(base + "/"):
             return True
-    # Bare filename match (e.g., "*.log")
-    if fnmatch.fnmatch(name, pat):
-        return True
-    # Handle ** in the middle of paths (simple regex fallback)
-    if "**" in pat:
-        regex = "^" + re.escape(pat).replace(r"\*\*", ".*").replace(r"\*", "[^/]*") + "$"
-        if re.match(regex, rel):
+    
+    # Bare filename match (e.g., "*.log") - matches anywhere in tree
+    # Only do this if pattern has no path separators (after stripping leading /)
+    pat_clean = pat.lstrip("/")
+    if "/" not in pat_clean:
+        if fnmatch.fnmatch(name, pat_clean):
+            return True
+    
+    # Pattern with slash: match against full relative path
+    if "/" in pat_clean:
+        if fnmatch.fnmatch(rel, pat_clean):
             return True
         # `**/` at the start must also match at the root of the tree,
         # not just nested paths. Strip it and retry.

@@ -54,27 +54,46 @@ python ctxpack.py pack --no-config --budget 4000
 ## Configuration
 
 ### `.ctxignore`
-Uses standard gitignore-style patterns. Lines starting with `#` are comments.
-Negation patterns (starting with `!`) can re-include previously excluded files.
+
+Uses a **documented subset of gitignore-style patterns**. Lines starting with `#` are comments.
+
+**Supported pattern semantics:**
+
+| Pattern | Description | Example |
+|---------|-------------|---------|
+| `*.ext` | Bare patterns match by filename anywhere in tree | `*.log` matches all `.log` files |
+| `dir/**` | Matches directory and all contents recursively | `node_modules/**` |
+| `**/*.ext` | Recursive match from any depth (including root) | `**/*.log` |
+| `/pattern` | Leading `/` is stripped; treated as bare pattern | `/test.log` = `test.log` |
+| `pattern/` | Trailing `/` stripped; matches dir and contents | `.git/` |
+| `!pattern` | Negation: re-includes previously excluded files | `!.env.example` |
+
+**Documented limitations (not full gitignore compatibility):**
+- Leading `/` does not strictly anchor to root (stripped for matching)
+- No support for escaped patterns (e.g., `\!important.txt`)
+- No directory-only patterns that exclude files with same name
 
 ```text
 # Ignore virtual environments
 venv/
 
-# Ignore all log files
+# Ignore all log files (anywhere in tree)
 *.log
+
+# Ignore specific directory and contents
+node_modules/**
 
 # Secret-bearing files are excluded by default for security:
 # .env, .env.*, *.pem, *.key, *.p12, *.pfx
 
-# Allow template env files (the default policy includes !.env.example)
+# Re-include template env files using negation
 !.env.example
 ```
 
 **Default secret exclusions:** ctxpack excludes the following secret-bearing files by default:
 - `.env` — environment variable files
 - `.env.*` — environment variants (e.g., `.env.local`, `.env.production`)
-- `!.env.example` — template files are explicitly allowed
+- `!.env.example` — template files are explicitly allowed via negation
 - `*.pem`, `*.key` — private keys and certificates
 - `*.p12`, `*.pfx` — PKCS#12 certificate bundles
 
