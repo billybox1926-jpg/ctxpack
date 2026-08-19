@@ -1434,3 +1434,201 @@ class TestPathPrivacy:
         json_file = tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")
         data = json.loads(json_file.read_text())
         assert data["root"] == str(tmp_path.resolve())
+
+
+class TestTokenBudgetBoundaries:
+    """Edge-case tests for very small and exact token budgets (issue #10).
+
+    These tests document the budget allocator's deterministic behavior
+    at all boundary values, ensuring no off-by-one or marker-over-budget
+    regression is possible without a failing test.
+    """
+
+    # === Budget 0 ===
+
+    def test_budget_zero_all_omitted(self):
+        """Budget 0: all files are omitted (no room for content)."""
+        inventory = [
+            {"path": "a.txt", "size_bytes": 100,
+             "tokens_estimate": 25, "content": "a" * 100},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 0)
+        assert is_incomplete is True
+        assert result[0].get("omitted") is True
+        assert result[0]["tokens_estimate"] == 0
+
+    # === Budget 1 ===
+
+    def test_budget_one_tiny_file(self):
+        """Budget 1: a single character file fits (1 token min)."""
+        inventory = [
+            {"path": "a.txt", "size_bytes": 1,
+             "tokens_estimate": 1, "content": "a"},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 1)
+        assert is_incomplete is False
+        assert result[0].get("truncated") is not True
+
+    def test_budget_one_larger_file_truncates(self):
+        """Budget 1: a 4-char file (1 token) fits exactly."""
+        inventory = [
+            {"path": "a.txt", "size_bytes": 4,
+             "tokens_estimate": 1, "content": "abcd"},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 1)
+        assert is_incomplete is False
+        assert result[0].get("truncated") is not True
+
+    def test_budget_one_oversized_file(self):
+        """Budget 1: an 8-char file (2 tokens) omitted (budget < marker estimate)."""
+        inventory = [
+            {"path": "a.txt", "size_bytes": 8,
+             "tokens_estimate": 2, "content": "abcdefgh"},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 1)
+        assert is_incomplete is True
+        # Budget 1 < marker estimate, so file is omitted (no room for marker)
+        assert result[0].get("omitted") is True
+
+    # === Marker estimate boundaries ===
+
+    def test_budget_smaller_than_marker(self):
+        """Budget smaller than marker estimate: file omitted."""
+        marker_tokens = ctxpack.estimate_tokens(ctxpack.TRUNCATION_MARKER)
+        inventory = [
+            {"path": "a.txt", "size_bytes": 400,
+             "tokens_estimate": 100, "content": "a" * 400},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, marker_tokens - 1)
+        assert is_incomplete is True
+        # File is omitted because remaining (budget - 0) < marker_tokens
+        assert result[0].get("omitted") is True
+
+    def test_budget_exactly_marker(self):
+        """Budget equals marker estimate: file still omitted (no room for content)."""
+        marker_tokens = ctxpack.estimate_tokens(ctxpack.TRUNCATION_MARKER)
+        inventory = [
+            {"path": "a.txt", "size_bytes": 400,
+             "tokens_estimate": 100, "content": "a" * 400},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, marker_tokens)
+        assert is_incomplete is True
+        # remaining = budget - 0 - marker_tokens = 0, so file is omitted
+        assert result[0].get("omitted") is True
+
+    # === Empty files ===
+
+    def test_empty_file_zero_tokens(self):
+        """Empty file contributes 0 tokens (no content = no tokens)."""
+        inventory = [
+            {"path": "empty.txt", "size_bytes": 0,
+             "tokens_estimate": 0, "content": ""},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 100)
+        assert is_incomplete is False
+        assert result[0].get("omitted") is not True
+
+    def test_empty_files_no_budget_used(self):
+        """Multiple empty files use no budget."""
+        inventory = [
+            {"path": f"{c}.txt", "size_bytes": 0,
+             "tokens_estimate": 0, "content": ""}
+            for c in "abc"
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 100)
+        assert is_incomplete is False
+        assert len(result) == 3
+        assert all(not r.get("omitted") for r in result)
+
+    # === One-character files ===
+
+    def test_one_char_file_one_token(self):
+        """A single character file uses 1 token (minimum)."""
+        inventory = [
+            {"path": "a.txt", "size_bytes": 1,
+             "tokens_estimate": 1, "content": "x"},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 1)
+        assert is_incomplete is False
+        assert result[0]["tokens_estimate"] == 1
+
+    def test_many_one_char_files(self):
+        """Many single-char files fit until budget is reached."""
+        inventory = [
+            {"path": f"{c}.txt", "size_bytes": 1,
+             "tokens_estimate": 1, "content": c}
+            for c in "abcdefghij"
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 5)
+        assert is_incomplete is True
+        included = [r for r in result if not r.get("omitted")]
+        assert len(included) == 5
+
+    # === Unicode-heavy content ===
+
+    def test_unicode_emoji_budget(self):
+        """Emoji content estimated by chars, not bytes."""
+        text = "🎉" * 20  # 20 chars, 80 bytes, 5 tokens
+        inventory = [
+            {"path": "emoji.txt", "size_bytes": 80,
+             "tokens_estimate": 5, "content": text},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 5)
+        assert is_incomplete is False
+        assert result[0].get("truncated") is not True
+
+    def test_unicode_cjk_budget(self):
+        """CJK content at exact budget boundary."""
+        text = "你好世界"  # 4 chars, 1 token
+        inventory = [
+            {"path": "cjk.txt", "size_bytes": 12,
+             "tokens_estimate": 1, "content": text},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 1)
+        assert is_incomplete is False
+
+    # === File exactly at remaining budget ===
+
+    def test_file_exactly_at_remaining_budget(self):
+        """A file that fits exactly is kept whole."""
+        inventory = [
+            {"path": "a.txt", "size_bytes": 400,
+             "tokens_estimate": 100, "content": "a" * 400},
+            {"path": "b.txt", "size_bytes": 200,
+             "tokens_estimate": 50, "content": "b" * 200},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 150)
+        assert is_incomplete is False
+        assert result[0].get("truncated") is not True
+        assert result[1].get("truncated") is not True
+
+    # === Multiple files competing at same budget ===
+
+    def test_two_files_at_boundary(self):
+        """Two files: first fits, second truncated at boundary."""
+        inventory = [
+            {"path": "a.txt", "size_bytes": 400,
+             "tokens_estimate": 100, "content": "a" * 400},
+            {"path": "b.txt", "size_bytes": 400,
+             "tokens_estimate": 100, "content": "b" * 400},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 150)
+        assert is_incomplete is True
+        assert result[0].get("truncated") is not True
+        assert result[1].get("truncated") is True
+
+    def test_three_files_last_two_omitted(self):
+        """Three files: first truncated, next two omitted."""
+        inventory = [
+            {"path": "a.txt", "size_bytes": 800,
+             "tokens_estimate": 200, "content": "a" * 800},
+            {"path": "b.txt", "size_bytes": 400,
+             "tokens_estimate": 100, "content": "b" * 400},
+            {"path": "c.txt", "size_bytes": 400,
+             "tokens_estimate": 100, "content": "c" * 400},
+        ]
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 100)
+        assert is_incomplete is True
+        assert result[0].get("truncated") is True
+        assert result[1].get("omitted") is True
+        assert result[2].get("omitted") is True
