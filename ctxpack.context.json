@@ -1,15 +1,114 @@
 {
   "generator": "ctxpack",
-  "root": "/tmp/pytest-of-root/pytest-19/test_generate_output_files0",
-  "budget_tokens": 8000,
-  "is_incomplete": false,
+  "root": "/workspace",
+  "budget_tokens": 100,
+  "is_incomplete": true,
+  "files_included": 1,
+  "files_omitted": 12,
   "files": [
     {
-      "path": "test.txt",
-      "size_bytes": 11,
-      "tokens_estimate": 2,
+      "path": ".ctxignore",
+      "size_bytes": 396,
+      "tokens_estimate": 99,
       "truncated": false,
-      "content": "Hello World"
+      "omitted": false,
+      "content": "# ctxpack ignore patterns (gitignore-style)\n.git/\n.svn/\n.hg/\n__pycache__/\n*.pyc\n*.pyo\nnode_modules/\nvenv/\n.venv/\ndist/\nbuild/\n.ruff_cache/\n.pytest_cache/\n.mypy_cache/\n.tox/\n.eggs/\nhtmlcov/\n.coverage\n*.log\n*.lock\npackage-lock.json\n.DS_Store\nThumbs.db\n# Secret-bearing files: excluded by default for security\n.env\n.env.*\n!.env.example\n*.pem\n*.key\n*.p12\n*.pfx\nctxpack.context.json\nctxpack.context.md"
+    },
+    {
+      "path": ".github/workflows/test.yml",
+      "size_bytes": 607,
+      "tokens_estimate": 0,
+      "truncated": false,
+      "omitted": true,
+      "content": ""
+    },
+    {
+      "path": ".gitignore",
+      "size_bytes": 344,
+      "tokens_estimate": 0,
+      "truncated": false,
+      "omitted": true,
+      "content": ""
+    },
+    {
+      "path": "LICENSE",
+      "size_bytes": 1066,
+      "tokens_estimate": 0,
+      "truncated": false,
+      "omitted": true,
+      "content": ""
+    },
+    {
+      "path": "README.md",
+      "size_bytes": 5677,
+      "tokens_estimate": 0,
+      "truncated": false,
+      "omitted": true,
+      "content": ""
+    },
+    {
+      "path": "ctxpack.py",
+      "size_bytes": 21971,
+      "tokens_estimate": 0,
+      "truncated": false,
+      "omitted": true,
+      "content": ""
+    },
+    {
+      "path": "docs/project.context.json",
+      "size_bytes": 163873,
+      "tokens_estimate": 0,
+      "truncated": false,
+      "omitted": true,
+      "content": ""
+    },
+    {
+      "path": "docs/project.context.md",
+      "size_bytes": 92806,
+      "tokens_estimate": 0,
+      "truncated": false,
+      "omitted": true,
+      "content": ""
+    },
+    {
+      "path": "examples/sample.context.json",
+      "size_bytes": 556,
+      "tokens_estimate": 0,
+      "truncated": false,
+      "omitted": true,
+      "content": ""
+    },
+    {
+      "path": "examples/sample.context.md",
+      "size_bytes": 418,
+      "tokens_estimate": 0,
+      "truncated": false,
+      "omitted": true,
+      "content": ""
+    },
+    {
+      "path": "pyproject.toml",
+      "size_bytes": 914,
+      "tokens_estimate": 0,
+      "truncated": false,
+      "omitted": true,
+      "content": ""
+    },
+    {
+      "path": "pytest.ini",
+      "size_bytes": 125,
+      "tokens_estimate": 0,
+      "truncated": false,
+      "omitted": true,
+      "content": ""
+    },
+    {
+      "path": "tests/test_ctxpack.py",
+      "size_bytes": 39437,
+      "tokens_estimate": 0,
+      "truncated": false,
+      "omitted": true,
+      "content": ""
     }
   ]
 }

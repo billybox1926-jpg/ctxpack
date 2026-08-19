@@ -99,7 +99,9 @@ venv/
 `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.crt`, `*.cer`, `*.jks`, `*.keystore`, `*.gpg`, `*.asc`, `**/.aws/**`, `**/.ssh/**`, `**/.netrc`, `**/.npmrc`, `**/.pypirc`
 
 ### `ctxpack.json`
+
 Optional configuration file. Created via `python ctxpack.py init`.
+
 ```json
 {
   "budget_tokens": 8000,
@@ -107,6 +109,45 @@ Optional configuration file. Created via `python ctxpack.py init`.
   "include_binary": false
 }
 ```
+
+## Token Budget Semantics
+
+### How token estimation works
+
+ctxpack uses a simple heuristic to estimate token count: **~4 characters per token**. This approximates typical LLM tokenization for English text and code. Key details:
+
+- **Empty content = 0 tokens**: Files with no content contribute zero tokens
+- **Minimum 1 token**: Any non-empty file gets at least 1 token estimate
+- **Truncation marker overhead**: When files are truncated, the truncation message (`...[TRUNCATED by ctxpack to fit budget]...`) accounts for ~11 tokens
+
+### Budget enforcement behavior
+
+When the total estimated tokens exceed the budget:
+
+1. Files are processed in sorted path order
+2. Files that fit entirely within remaining budget are included as-is
+3. The first file that would exceed the budget is **truncated** (not dropped), with a truncation marker appended
+4. Remaining files are marked as **omitted** (empty content, listed in output)
+
+This ensures:
+- **No silent drops**: Every discovered file appears in the output (either full, truncated, or omitted)
+- **Budget never exceeded**: The truncation marker's token cost is reserved before slicing
+- **Transparent about missing content**: Omitted files are listed with their original size/token estimates
+
+### Edge cases
+
+| Scenario | Behavior |
+|----------|----------|
+| Empty repository | Outputs header only, 0 tokens used |
+| Single file > budget | File truncated to fit budget + marker |
+| Exact budget match | All files included without truncation |
+| Very small budget (< 20 tokens) | First file may be truncated immediately or omitted |
+
+### Limitations
+
+- This is a **rough estimate**, not an exact token count. Actual LLM tokenizers (e.g., tiktoken, sentencepiece) may vary by ±20-30%
+- Code with many symbols, non-English text, or unusual formatting may have different actual token counts
+- For critical workflows, verify actual token usage with your target model's tokenizer
 
 ## Output Examples
 
