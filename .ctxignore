@@ -1,0 +1,19 @@
+# ctxpack ignore patterns (gitignore-style)
+.git/
+.svn/
+.hg/
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+venv/
+.venv/
+dist/
+build/
+*.log
+*.lock
+package-lock.json
+.DS_Store
+Thumbs.db
+ctxpack.context.json
+ctxpack.context.md
