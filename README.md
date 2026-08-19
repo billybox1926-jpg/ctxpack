@@ -7,13 +7,14 @@
 - `ctxpack.context.json` — machine-readable inventory for agents/tools
 - `ctxpack.context.md` — human-readable prompt pack for pasting into an LLM
 
-No dependencies. No network. No secrets by default.
+No dependencies. No network. **Secrets excluded by default.**
 
 ## Features
 
 - 📁 Recursively scans the current directory
 - 🚫 Respects `.ctxignore` (gitignore-style patterns)
 - 🪶 Skips binary and overly large files by default
+- 🔒 **Excludes secrets by default**: `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`
 - 🧮 Estimates token usage (approx `chars / 4`)
 - ✂️ Respects a max token budget (`--budget`) and truncates gracefully
 - ⚙️ Simple configuration via optional `ctxpack.json`
@@ -54,14 +55,28 @@ python ctxpack.py pack --no-config --budget 4000
 
 ### `.ctxignore`
 Uses standard gitignore-style patterns. Lines starting with `#` are comments.
+Negation patterns (starting with `!`) can re-include previously excluded files.
+
 ```text
 # Ignore virtual environments
 venv/
-.env
 
 # Ignore all log files
 *.log
+
+# Secret-bearing files are excluded by default for security:
+# .env, .env.*, *.pem, *.key, *.p12, *.pfx
+
+# Allow template env files (the default policy includes !.env.example)
+!.env.example
 ```
+
+**Default secret exclusions:** ctxpack excludes the following secret-bearing files by default:
+- `.env` — environment variable files
+- `.env.*` — environment variants (e.g., `.env.local`, `.env.production`)
+- `!.env.example` — template files are explicitly allowed
+- `*.pem`, `*.key` — private keys and certificates
+- `*.p12`, `*.pfx` — PKCS#12 certificate bundles
 
 ### `ctxpack.json`
 Optional configuration file. Created via `python ctxpack.py init`.

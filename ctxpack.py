@@ -54,7 +54,15 @@ def load_ignore_patterns(root: Path, cli_exclude: list[str]) -> list[str]:
         ".coverage", ".coverage.*",
         "*.log", "*.lock", "package-lock.json",
         ".DS_Store", "Thumbs.db", 
-        DEFAULT_CONFIG_FILE, f"{DEFAULT_BASE_NAME}.context.json", f"{DEFAULT_BASE_NAME}.context.md"
+        DEFAULT_CONFIG_FILE, f"{DEFAULT_BASE_NAME}.context.json", f"{DEFAULT_BASE_NAME}.context.md",
+        # Secret-bearing files: exclude by default for security
+        ".env",
+        ".env.*",
+        "!.env.example",
+        "*.pem",
+        "*.key",
+        "*.p12",
+        "*.pfx"
     ]
     ignore_file = root / DEFAULT_IGNORE_FILE
     patterns = list(default_patterns)
@@ -97,14 +105,31 @@ def matches_pattern(rel: str, name: str, pattern: str) -> bool:
     return False
 
 def should_process(path: Path, root: Path, include_patterns: list[str], exclude_patterns: list[str]) -> bool:
-    """Determine if a file should be processed based on include/exclude rules."""
+    """Determine if a file should be processed based on include/exclude rules.
+    
+    Supports gitignore-style negation patterns: patterns starting with '!' 
+    re-include files that matched a previous exclusion pattern.
+    """
     rel = path.relative_to(root).as_posix()
     name = path.name
     
-    # 1. Exclude takes absolute precedence
+    # Track whether the file has been excluded so far
+    is_excluded = False
+    
+    # Process patterns in order, allowing negation patterns to re-include
     for pat in exclude_patterns:
-        if matches_pattern(rel, name, pat):
-            return False
+        if pat.startswith("!"):
+            # Negation pattern: re-include if it matches
+            neg_pat = pat[1:]
+            if is_excluded and matches_pattern(rel, name, neg_pat):
+                is_excluded = False
+        else:
+            # Normal exclusion pattern
+            if matches_pattern(rel, name, pat):
+                is_excluded = True
+    
+    if is_excluded:
+        return False
             
     # 2. If no include patterns, everything not excluded is included
     if not include_patterns:
@@ -348,6 +373,11 @@ def cmd_init(args):
         ".coverage",
         "*.log", "*.lock", "package-lock.json",
         ".DS_Store", "Thumbs.db",
+        "# Secret-bearing files: excluded by default for security",
+        ".env",
+        ".env.*",
+        "!.env.example",  # Allow template files
+        "*.pem", "*.key", "*.p12", "*.pfx",
         "ctxpack.context.json", "ctxpack.context.md"
     ])
     default_config = json.dumps({

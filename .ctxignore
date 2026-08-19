@@ -10,10 +10,25 @@ venv/
 .venv/
 dist/
 build/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.tox/
+.eggs/
+htmlcov/
+.coverage
 *.log
 *.lock
 package-lock.json
 .DS_Store
 Thumbs.db
+# Secret-bearing files: excluded by default for security
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
 ctxpack.context.json
 ctxpack.context.md
