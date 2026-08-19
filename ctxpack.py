@@ -79,29 +79,69 @@ def load_ignore_patterns(root: Path, cli_exclude: list[str]) -> list[str]:
     return patterns
 
 def matches_pattern(rel: str, name: str, pattern: str) -> bool:
-    """Check if a path matches a gitignore-style pattern."""
+    """Check if a path matches a gitignore-style pattern.
+    
+    Supported semantics (documented subset of gitignore):
+    - Bare patterns (e.g., `*.log`) match by filename anywhere in tree
+    - Patterns with `/` are matched against relative path from root
+    - Leading `/` anchors pattern to root (currently treated same as without for simplicity)
+    - Trailing `/` matches directories only (currently stripped for matching)
+    - `**` matches zero or more directory levels
+    - `dir/**` matches everything inside dir (including dir itself)
+    - Negation patterns (`!foo`) handled in should_process(), not here
+    
+    Note: This is a simplified subset of full gitignore semantics. See README
+    for exactly which patterns are supported.
+    """
     pat = pattern.rstrip("/")
-    # Exact match (for directories like ".git" matching pattern ".git/**")
+    
+    # Handle ** in patterns first (most general case)
+    if "**" in pat:
+        # Convert gitignore-style ** to regex
+        # ** matches zero or more directory components
+        regex_pat = re.escape(pat)
+        regex_pat = regex_pat.replace(r"\*\*", ".*")  # ** -> .*
+        regex_pat = regex_pat.replace(r"\*", "[^/]*")  # * -> [^/]*
+        regex = "^" + regex_pat + "$"
+        if re.match(regex, rel):
+            return True
+        
+        # For patterns like **/*.ext, also allow matching at root level
+        # where ** matches zero directories
+        if pat.startswith("**/"):
+            suffix = pat[3:]  # Remove **/
+            # Try matching the suffix as a bare pattern
+            if "/" not in suffix:
+                # It's just a filename pattern like *.log
+                if fnmatch.fnmatch(name, suffix):
+                    return True
+    
+    # Exact relative path match
     if fnmatch.fnmatch(rel, pat):
         return True
+    
     # Recursive directory match (e.g., ".git/config" matching ".git/**")
     if fnmatch.fnmatch(rel, pat + "/**"):
         return True
-    # A "dir/**" pattern must also match the directory itself, otherwise
-    # os.walk still descends into .git / node_modules / __pycache__ and only
-    # their contents get filtered.
+    
+    # A "dir/**" pattern must also match the directory itself and its contents
     if pat.endswith("/**"):
         base = pat[:-3]
         if fnmatch.fnmatch(rel, base) or rel.startswith(base + "/"):
             return True
-    # Bare filename match (e.g., "*.log")
-    if fnmatch.fnmatch(name, pat):
-        return True
-    # Handle ** in the middle of paths (simple regex fallback)
-    if "**" in pat:
-        regex = "^" + re.escape(pat).replace(r"\*\*", ".*").replace(r"\*", "[^/]*") + "$"
-        if re.match(regex, rel):
+    
+    # Bare filename match (e.g., "*.log") - matches anywhere in tree
+    # Only do this if pattern has no path separators (after stripping leading /)
+    pat_clean = pat.lstrip("/")
+    if "/" not in pat_clean:
+        if fnmatch.fnmatch(name, pat_clean):
             return True
+    
+    # Pattern with slash: match against full relative path
+    if "/" in pat_clean:
+        if fnmatch.fnmatch(rel, pat_clean):
+            return True
+    
     return False
 
 def should_process(path: Path, root: Path, include_patterns: list[str], exclude_patterns: list[str]) -> bool:
