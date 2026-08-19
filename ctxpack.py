@@ -588,36 +588,51 @@ def print_summary(inventory: list[dict], original_inventory: list[dict], budget:
 def cmd_init(args):
     """Create default .ctxignore and ctxpack.json if missing."""
     root = Path.cwd()
-    default_ignore = "\n".join([
-        "# ctxpack ignore patterns (gitignore-style)",
-        ".git/", ".svn/", ".hg/",
-        "__pycache__/", "*.pyc", "*.pyo",
-        "node_modules/", "venv/", ".venv/",
-        "dist/", "build/",
-        ".ruff_cache/", ".pytest_cache/", ".mypy_cache/",
-        ".tox/", ".eggs/", "htmlcov/",
-        ".coverage",
-        "*.log", "*.lock", "package-lock.json",
-        ".DS_Store", "Thumbs.db",
-        "ctxpack.context.json", "ctxpack.context.md",
-        "# Secret-safe defaults (credentials never reach the pack)",
-        ".env",
-        ".env.*",
-        "!.env.example",
-        "*.pem",
-        "*.key",
-        "*.p12",
-        "*.pfx",
-        "*.crt",
-        "*.cer",
-        "*.gpg",
-        "*.asc",
-        "**/.aws/**",
-        "**/.ssh/**",
-        "**/.netrc",
-        "**/.npmrc",
-        "**/.pypirc",
-    ])
+    default_ignore = (
+        "# ctxpack ignore patterns (gitignore-style)\n"
+        ".git/\n"
+        ".svn/\n"
+        ".hg/\n"
+        "__pycache__/\n"
+        "*.pyc\n"
+        "*.pyo\n"
+        "node_modules/\n"
+        "venv/\n"
+        ".venv/\n"
+        "dist/\n"
+        "build/\n"
+        ".ruff_cache/\n"
+        ".pytest_cache/\n"
+        ".mypy_cache/\n"
+        ".tox/\n"
+        ".eggs/\n"
+        "htmlcov/\n"
+        ".coverage\n"
+        "*.log\n"
+        "*.lock\n"
+        "package-lock.json\n"
+        ".DS_Store\n"
+        "Thumbs.db\n"
+        "ctxpack.context.json\n"
+        "ctxpack.context.md\n"
+        "# Secret-safe defaults (credentials never reach the pack)\n"
+        ".env\n"
+        ".env.*\n"
+        "!.env.example\n"
+        "*.pem\n"
+        "*.key\n"
+        "*.p12\n"
+        "*.pfx\n"
+        "*.crt\n"
+        "*.cer\n"
+        "*.gpg\n"
+        "*.asc\n"
+        "**/.aws/**\n"
+        "**/.ssh/**\n"
+        "**/.netrc\n"
+        "**/.npmrc\n"
+        "**/.pypirc\n"
+    )
     default_config = json.dumps(
         {
             "budget_tokens": 8000,
