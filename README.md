@@ -28,6 +28,16 @@ curl -O https://raw.githubusercontent.com/billybox1926-jpg/ctxpack/main/ctxpack.
 chmod +x ctxpack.py
 ```
 
+Or install it to get the `ctxpack` command on your PATH:
+
+```bash
+pip install ctxpack-cli
+ctxpack --version
+```
+
+> The PyPI distribution is named **`ctxpack-cli`** because `ctxpack` was already
+> taken by an unrelated project. The installed command is still `ctxpack`.
+
 ## Usage
 
 ### Initialize a project
