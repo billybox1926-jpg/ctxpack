@@ -124,7 +124,12 @@ Optional configuration file. Created via `python ctxpack.py init`.
 
 ### How token estimation works
 
-ctxpack uses a simple heuristic to estimate token count: **~4 characters per token**. This approximates typical LLM tokenization for English text and code. Key details:
+ctxpack uses a script-aware heuristic to estimate token count:
+
+- **Latin/ASCII text**: **~4 characters per token**, approximating typical LLM tokenization for English text and code.
+- **CJK text** (Chinese, Japanese kana, Korean hangul): **~1.5 characters per token**, since CJK scripts tokenize far less densely than Latin text (typically 1-2 tokens per character). Mixed text is estimated per-script and summed.
+
+Key details:
 
 - **Empty content = 0 tokens**: Files with no content contribute zero tokens
 - **Minimum 1 token**: Any non-empty file gets at least 1 token estimate
@@ -250,6 +255,16 @@ To opt a specific secret file back in (e.g., a test fixture), add a negation pat
 ```text
 !important/test-fixture.pem
 ```
+
+#### Strict mode
+
+If you want the default secret exclusions to be non-overridable, pass `--strict-secrets`:
+
+```bash
+python ctxpack.py pack --strict-secrets
+```
+
+In strict mode, `.ctxignore` and CLI negation patterns **cannot** re-include any secret file (`.env`, `*.pem`, `*.key`, `*.gpg`, credential directories, etc.). The built-in `.env.example` template carve-out still applies, so conventional example files remain packable.
 
 ### Path privacy
 

@@ -375,6 +375,32 @@ class TestEstimateTokens:
         assert ctxpack.estimate_tokens("a" * 12) == 3  # 12 chars -> 3 tokens
         assert ctxpack.estimate_tokens("a" * 100) == 25  # 100 chars -> 25 tokens
 
+    def test_pure_cjk_uses_dense_estimate(self):
+        """CJK text tokenizes ~1-2 chars/token, not 4 chars/token."""
+        # '中文字符测试' is 6 chars, x6 = 36 CJK chars: 24 tokens at 1.5
+        # chars/token, vs. the old heuristic's 9 (36 // 4) — a ~2.7x
+        # underestimate before.
+        text = "中文字符测试" * 6  # 36 CJK chars
+        tokens = ctxpack.estimate_tokens(text)
+        assert tokens == 24
+
+    def test_cjk_includes_japanese_and_korean(self):
+        """Hiragana/Katakana and Hangul are also dense scripts."""
+        assert len("ひらがなカタカナ" * 3) == 24  # 8 chars x3
+        assert ctxpack.estimate_tokens("ひらがなカタカナ" * 3) == round(24 / 1.5)  # 16
+        assert ctxpack.estimate_tokens("한국어텍스트" * 3) == 12  # 18 hangul / 1.5
+
+    def test_mixed_script_sums_both_tiers(self):
+        """Mixed Latin + CJK text is estimated per-script and summed."""
+        latin = "hello world " * 10  # 120 ASCII chars -> 30 tokens
+        cjk = "中文测试" * 5  # 20 CJK chars -> round(20/1.5)=13 tokens
+        assert ctxpack.estimate_tokens(latin + cjk) == 30 + 13
+
+    def test_ascii_behavior_unchanged(self):
+        """Pure-ASCII estimation must remain exactly len//4."""
+        assert ctxpack.estimate_tokens("a" * 400) == 100
+        assert ctxpack.estimate_tokens("print('hello world')") == 5  # 20 chars // 4
+
 
 class TestReadTextFile:
     """Tests for read_text_file function."""
@@ -1471,6 +1497,95 @@ class TestSecretSafeDefaults:
         assert "fixture.pem" in paths
         assert "real.pem" not in paths
 
+    def test_strict_secrets_blocks_negation_override(self, tmp_path):
+        """--strict-secrets: a `!.env` negation must NOT re-include .env."""
+        (tmp_path / ".env").write_text("SECRET_KEY=abc123", encoding="utf-8")
+        (tmp_path / ".env.example").write_text("SECRET_KEY=", encoding="utf-8")
+        (tmp_path / "app.py").write_text("print('hi')", encoding="utf-8")
+
+        # User config tries to re-include the secret
+        ignore_file = tmp_path / ctxpack.DEFAULT_IGNORE_FILE
+        ignore_file.write_text("!.env\n", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type(
+                "Args",
+                (),
+                {
+                    "budget": 100000,
+                    "no_config": True,
+                    "include": None,
+                    "exclude": None,
+                    "output_dir": None,
+                    "base_name": None,
+                    "strict_secrets": True,
+                },
+            )()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert ".env" not in paths
+        assert ".env.example" in paths  # template carve-out preserved
+        assert "app.py" in paths
+
+    def test_strict_secrets_blocks_cli_negation_override(self, tmp_path):
+        """--strict-secrets: `--exclude '!fixture.pem'` must not re-include."""
+        (tmp_path / "fixture.pem").write_text("test key", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type(
+                "Args",
+                (),
+                {
+                    "budget": 100000,
+                    "no_config": True,
+                    "include": None,
+                    "exclude": "!fixture.pem",
+                    "output_dir": None,
+                    "base_name": None,
+                    "strict_secrets": True,
+                },
+            )()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert "fixture.pem" not in paths
+
+    def test_without_strict_secrets_negation_still_works(self, tmp_path):
+        """Without --strict-secrets, existing negation behavior is unchanged."""
+        (tmp_path / "fixture.pem").write_text("test key", encoding="utf-8")
+
+        ignore_file = tmp_path / ctxpack.DEFAULT_IGNORE_FILE
+        ignore_file.write_text("!fixture.pem\n", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type(
+                "Args",
+                (),
+                {
+                    "budget": 100000,
+                    "no_config": True,
+                    "include": None,
+                    "exclude": None,
+                    "output_dir": None,
+                    "base_name": None,
+                    "strict_secrets": False,
+                },
+            )()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert "fixture.pem" in paths
+
 
 class TestIgnoreSemantics:
     """Regression tests for ctxignore pattern semantics (issue #6).
@@ -1758,10 +1873,10 @@ class TestTokenBudgetSemantics:
         assert tokens == max(1, 13 // 4)  # 3
 
     def test_cjk_content_estimation(self):
-        """CJK characters are estimated by character count."""
+        """CJK characters are tokenized densely (~1.5 chars/token)."""
         text = "你好世界"  # 4 Chinese chars
         tokens = ctxpack.estimate_tokens(text)
-        assert tokens == 1  # 4 / 4
+        assert tokens == 3  # round(4 / 1.5) = 3, vs. old heuristic's 1
 
     # === Determinism ===
 
