@@ -139,6 +139,10 @@ def load_ignore_patterns(
         "**/.pypirc",
     ]
     # Secret patterns enforced as a hard block under --strict-secrets.
+    # These deliberately DUPLICATE the secret entries in default_patterns:
+    # in default mode only default_patterns applies, but in strict mode
+    # this block is appended AFTER user .ctxignore patterns so that
+    # last-match-wins makes these exclusions beat any user negation.
     secret_patterns = [
         ".env",
         ".env.*",
@@ -368,9 +372,13 @@ def estimate_tokens(text: str) -> int:
 
     - ASCII/Latin text: ~4 characters per token, approximating typical LLM
       tokenization for English prose and code.
-    - CJK text (CJK Unified Ideographs, Hiragana, Katakana, Hangul): ~1.5
-      characters per token, since CJK scripts tokenize far less densely than
-      Latin text (typically 1-2 tokens per character, not 0.25).
+    - CJK-adjacent text: ~1.5 characters per token, since CJK scripts
+      tokenize far less densely than Latin text (typically 1-2 tokens per
+      character, not 0.25). The U+2E80-U+9FFF range intentionally covers
+      CJK Unified Ideographs plus Hiragana, Katakana, Bopomofo, CJK
+      Symbols/Punctuation, CJK Strokes, and Katakana Phonetic Extensions,
+      all of which fall inside it; Hangul (U+AC00-D7AF) and CJK
+      Compatibility Ideographs (U+F900-FAFF) have their own ranges.
 
     Mixed text is estimated by counting each script's contribution
     separately. This is a rough estimate intended for budgeting purposes,
