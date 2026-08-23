@@ -16,6 +16,7 @@ import fnmatch
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 DEFAULT_BUDGET_TOKENS = 8000
@@ -60,8 +61,18 @@ def load_config(root: Path) -> dict:
         try:
             with config_path.open("r", encoding="utf-8") as f:
                 return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            pass
+        except json.JSONDecodeError as e:
+            print(
+                f"ctxpack: warning: could not parse {DEFAULT_CONFIG_FILE}: {e}; "
+                "falling back to defaults",
+                file=sys.stderr,
+            )
+        except OSError as e:
+            print(
+                f"ctxpack: warning: could not read {DEFAULT_CONFIG_FILE}: {e}; "
+                "falling back to defaults",
+                file=sys.stderr,
+            )
     return {}
 
 
@@ -395,6 +406,15 @@ def build_file_inventory(
         for fname in filenames:
             fpath = dirpath / fname
             if not should_process(fpath, root, include_patterns, exclude_patterns):
+                continue
+
+            # Symlink safety: a file symlink inside the scan root may point
+            # anywhere on disk. Resolve it and skip anything that escapes the
+            # scan root so packs never exfiltrate files from outside it.
+            try:
+                if not fpath.resolve().is_relative_to(root.resolve()):
+                    continue
+            except OSError:
                 continue
 
             content = read_text_file(fpath)

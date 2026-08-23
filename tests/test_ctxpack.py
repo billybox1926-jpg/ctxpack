@@ -492,6 +492,43 @@ class TestBuildFileInventory:
         assert item["size_bytes"] == len(content.encode("utf-8"))
 
 
+class TestSymlinkTraversal:
+    """Security: file symlinks must not read files outside the scan root."""
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs symlink privilege")
+    def test_file_symlink_escaping_root_is_skipped(self, tmp_path):
+        """A symlink pointing outside the scan root must not appear in the pack."""
+        secret = tmp_path / "outside-secret.txt"
+        secret.write_text("TOP SECRET", encoding="utf-8")
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "normal.txt").write_text("hello", encoding="utf-8")
+        try:
+            (repo / "leak.txt").symlink_to(secret)
+        except OSError:
+            pytest.skip("cannot create symlinks on this platform")
+
+        inventory = ctxpack.build_file_inventory(repo, [], [])
+        paths = [item["path"] for item in inventory]
+
+        assert paths == ["normal.txt"]
+
+    def test_symlink_within_root_is_still_included(self, tmp_path):
+        """An internal symlink (or hardlinked regular file) stays in the pack."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "real.txt").write_text("real content", encoding="utf-8")
+        try:
+            (repo / "alias.txt").symlink_to(repo / "real.txt")
+        except OSError:
+            pytest.skip("cannot create symlinks on this platform")
+
+        inventory = ctxpack.build_file_inventory(repo, [], [])
+        paths = [item["path"] for item in inventory]
+        assert paths == ["alias.txt", "real.txt"]
+
+
 class TestTrimToBudget:
     """Tests for trim_to_budget function."""
 
