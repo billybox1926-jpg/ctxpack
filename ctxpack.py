@@ -76,12 +76,18 @@ def load_config(root: Path) -> dict:
     return {}
 
 
-def load_ignore_patterns(root: Path, cli_exclude: list[str]) -> list[str]:
+def load_ignore_patterns(
+    root: Path, cli_exclude: list[str], strict_secrets: bool = False
+) -> list[str]:
     """Load patterns from .ctxignore, merged with CLI excludes.
 
     Secret-safe defaults: local env files, private keys, and certificate
     bundles are excluded by default so credentials never reach the pack.
     ``!.env.example`` preserves the conventional template name.
+
+    With ``strict_secrets=True``, the secret defaults are enforced as a hard
+    block that ``.ctxignore`` / CLI negation cannot override (the built-in
+    ``!.env.example`` template carve-out still applies).
     """
     default_patterns = [
         ".git/**",
@@ -132,6 +138,27 @@ def load_ignore_patterns(root: Path, cli_exclude: list[str]) -> list[str]:
         "**/.npmrc",
         "**/.pypirc",
     ]
+    # Secret patterns enforced as a hard block under --strict-secrets.
+    secret_patterns = [
+        ".env",
+        ".env.*",
+        "!.env.example",
+        "*.pem",
+        "*.key",
+        "*.p12",
+        "*.pfx",
+        "*.crt",
+        "*.cer",
+        "*.jks",
+        "*.keystore",
+        "*.gpg",
+        "*.asc",
+        "**/.aws/**",
+        "**/.ssh/**",
+        "**/.netrc",
+        "**/.npmrc",
+        "**/.pypirc",
+    ]
     ignore_file = root / DEFAULT_IGNORE_FILE
     patterns = list(default_patterns)
 
@@ -141,6 +168,18 @@ def load_ignore_patterns(root: Path, cli_exclude: list[str]) -> list[str]:
                 line = line.strip()
                 if line and not line.startswith("#"):
                     patterns.append(line)
+
+    if strict_secrets:
+        # Append the secret block LAST so its exclusions win over any
+        # negation the user config or CLI introduced. The built-in
+        # !.env.example carve-out inside secret_patterns is re-stated after
+        # each secret pattern it could be shadowed by, keeping the template
+        # opt-in available even in strict mode.
+        for pat in secret_patterns:
+            patterns.append(pat)
+            if pat == ".env.*":
+                patterns.append("!.env.example")
+        return patterns
 
     # CLI excludes take precedence and are appended
     patterns.extend(cli_exclude)
@@ -325,9 +364,17 @@ def should_process(
 def estimate_tokens(text: str) -> int:
     """Estimate token count for text content.
 
-    Uses a simple heuristic of ~4 characters per token, which approximates
-    typical LLM tokenization for English text and code. This is a rough
-    estimate intended for budgeting purposes, not an exact count.
+    Uses a two-tier heuristic:
+
+    - ASCII/Latin text: ~4 characters per token, approximating typical LLM
+      tokenization for English prose and code.
+    - CJK text (CJK Unified Ideographs, Hiragana, Katakana, Hangul): ~1.5
+      characters per token, since CJK scripts tokenize far less densely than
+      Latin text (typically 1-2 tokens per character, not 0.25).
+
+    Mixed text is estimated by counting each script's contribution
+    separately. This is a rough estimate intended for budgeting purposes,
+    not an exact count.
 
     Edge cases:
     - Empty strings return 0 tokens (no content = no tokens)
@@ -342,7 +389,22 @@ def estimate_tokens(text: str) -> int:
     """
     if not text:
         return 0
-    return max(1, len(text) // 4)
+    cjk_chars = sum(
+        1
+        for ch in text
+        if "\u2e80" <= ch <= "\u9fff"
+        or "\uac00" <= ch <= "\ud7af"
+        or "\uf900" <= ch <= "\ufaff"
+    )
+    if cjk_chars == len(text):
+        # Pure CJK: ~1.5 chars per token
+        return max(1, round(len(text) / 1.5))
+    if cjk_chars == 0:
+        # Pure ASCII/Latin: ~4 chars per token
+        return max(1, len(text) // 4)
+    # Mixed: estimate each script separately and sum
+    latin_len = len(text) - cjk_chars
+    return max(1, latin_len // 4 + round(cjk_chars / 1.5))
 
 
 def looks_binary(path: Path, probe_bytes: int = 8192) -> bool:
@@ -743,7 +805,9 @@ def cmd_pack(args):
     # Merge the built-in defaults and .ctxignore with any CLI/config excludes.
     # The v0.2.0 rewrite left load_ignore_patterns() defined but never called,
     # so .ctxignore and every default (.git, venv, *.log, ...) were ignored.
-    exclude_patterns = load_ignore_patterns(root, cli_exclude)
+    exclude_patterns = load_ignore_patterns(
+        root, cli_exclude, strict_secrets=getattr(args, "strict_secrets", False)
+    )
 
     print(f"Scanning {root} ...")
     original_inventory = build_file_inventory(root, include_patterns, exclude_patterns)
@@ -838,6 +902,15 @@ def main():
     )
     pack_parser.add_argument(
         "--no-config", action="store_true", help="ignore ctxpack.json settings"
+    )
+    pack_parser.add_argument(
+        "--strict-secrets",
+        action="store_true",
+        help=(
+            "make default secret exclusions non-overridable: .ctxignore and "
+            "--exclude negation patterns cannot re-include secret files "
+            "(.env.example templates remain allowed)"
+        ),
     )
     pack_parser.add_argument(
         "--show-absolute-paths",
