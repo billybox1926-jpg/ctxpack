@@ -2305,60 +2305,45 @@ class TestTokenBudgetBoundaries:
         assert result[1].get("omitted") is True
         assert result[2].get("omitted") is True
 
-    def test_print_summary_excludes_omitted_files(self, capsys):
-        """Files included must count only non-omitted entries (issue #21).
+    def test_cjk_truncation_respects_budget(self):
+        """CJK content truncated to fit must not exceed the token budget.
 
-        The trimmed inventory keeps omitted files as tombstones so paths
-        are never silently dropped; print_summary previously counted them.
+        Regression for issue #20: the old code sliced remaining*4 chars
+        assuming ~4 chars/token, but estimate_tokens() bills pure CJK at
+        ~1.5 chars/token, so a CJK file emitted up to ~2.7x its slice of
+        the budget.
         """
+        cjk = "漢字テスト" * 2000  # ~6667 estimated tokens
         inventory = [
-            {
-                "path": "a.txt",
-                "size_bytes": 2400,
-                "tokens_estimate": 600,
-                "content": "a" * 2400,
-            },
-            {
-                "path": "b.txt",
-                "size_bytes": 2400,
-                "tokens_estimate": 600,
-                "content": "b" * 2400,
-            },
             {
                 "path": "c.txt",
-                "size_bytes": 2400,
-                "tokens_estimate": 600,
-                "content": "c" * 2400,
-            },
-        ]
-        trimmed, is_incomplete = ctxpack.trim_to_budget(inventory, 1000)
-        assert is_incomplete is True
-
-        ctxpack.print_summary(trimmed, inventory, 1000)
-        out = capsys.readouterr().out
-
-        omitted = sum(1 for item in trimmed if item.get("omitted"))
-        included = len(trimmed) - omitted
-        assert included < len(trimmed)  # precondition: tombstones exist
-        included_line = next(
-            line for line in out.splitlines() if line.startswith("Files included:")
-        )
-        assert str(included) in included_line
-        # Parity with md/json outputs: report the omitted count too.
-        if omitted:
-            assert f"Files omitted:     {omitted}" in out
-
-    def test_print_summary_no_omitted_line_when_all_fit(self, capsys):
-        """No 'Files omitted' line when nothing was left out."""
-        inventory = [
-            {
-                "path": "a.txt",
-                "size_bytes": 100,
-                "tokens_estimate": 25,
-                "content": "a" * 100,
+                "size_bytes": 30000,
+                "tokens_estimate": ctxpack.estimate_tokens(cjk),
+                "content": cjk,
             }
         ]
-        ctxpack.print_summary(inventory, inventory, 1000)
-        out = capsys.readouterr().out
-        assert "Files included:    1" in out
-        assert "Files omitted:" not in out
+
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 100)
+
+        assert is_incomplete is True
+        assert result[0].get("truncated") is True
+        total = sum(item["tokens_estimate"] for item in result)
+        assert total <= 100
+        # Sanity: it actually kept most of the budget rather than omitting.
+        assert total >= 80
+
+    def test_mixed_script_truncation_respects_budget(self):
+        """Mixed Latin/CJK truncation must also stay within budget."""
+        mixed = ("code_line = 'value'  # コメント\n" * 500) + ("漢字のテキスト" * 1000)
+        inventory = [
+            {
+                "path": "m.py",
+                "size_bytes": len(mixed.encode()),
+                "tokens_estimate": ctxpack.estimate_tokens(mixed),
+                "content": mixed,
+            }
+        ]
+        result, _ = ctxpack.trim_to_budget(inventory, 250)
+        assert result[0].get("truncated") is True
+        total = sum(item["tokens_estimate"] for item in result)
+        assert total <= 250

@@ -508,6 +508,26 @@ def build_file_inventory(
 TRUNCATION_MARKER = "\n\n...[TRUNCATED by ctxpack to fit budget]..."
 
 
+def _slice_to_token_prefix(content: str, max_tokens: int) -> str:
+    """Return the longest prefix of content costing <= max_tokens.
+
+    estimate_tokens() is monotonic in prefix length, so a binary search
+    finds the exact boundary. Slicing by a fixed chars-per-token factor
+    (e.g. 4) overshoots for CJK content, which is billed at ~1.5
+    chars/token -- up to ~2.7x the intended budget (issue #20).
+    """
+    if max_tokens < 0:
+        return ""
+    lo, hi = 0, len(content)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if estimate_tokens(content[:mid]) <= max_tokens:
+            lo = mid
+        else:
+            hi = mid - 1
+    return content[:lo]
+
+
 def trim_to_budget(
     inventory: list[dict], budget_tokens: int
 ) -> tuple[list[dict], bool]:
@@ -557,7 +577,11 @@ def trim_to_budget(
             budget_spent = True
             continue
 
-        truncated = item["content"][: remaining * 4] + TRUNCATION_MARKER
+        # Slice so the kept prefix's own token estimate fits the remaining
+        # budget. A fixed chars*4 slice overshoots for CJK (issue #20).
+        truncated = (
+            _slice_to_token_prefix(item["content"], remaining) + TRUNCATION_MARKER
+        )
         item_copy = dict(item)
         item_copy["content"] = truncated
         item_copy["tokens_estimate"] = estimate_tokens(truncated)
