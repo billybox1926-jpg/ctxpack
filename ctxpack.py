@@ -502,11 +502,40 @@ def read_text_file(path: Path) -> str | None:
     return raw.decode("utf-8", errors="replace")
 
 
+SKIP_LIST_CAP = 50  # max individual skip entries listed before count-only
+
+
+def _classify_skip(path: Path, content: str | None) -> str | None:
+    """Classify why read_text_file() produced no (usable text) content.
+
+    Returns "extension", "binary", or "too_large" for skips; None for
+    normal content. Extension-based skips are aggregated as counts by the
+    caller; binary/too_large are listed individually (issue #36).
+    """
+    if path.suffix.lower() in BINARY_EXTENSIONS:
+        return "extension"
+    if content is None:
+        return "binary"
+    if content.startswith("[File skipped: too large"):
+        return "too_large"
+    return None
+
+
 def build_file_inventory(
     root: Path, include_patterns: list[str], exclude_patterns: list[str]
-) -> list[dict]:
-    """Walk root, collect non-ignored text files with metadata."""
+) -> tuple[list[dict], list[dict]]:
+    """Walk root, collect non-ignored text files with metadata.
+
+    Returns (inventory, skipped). Each skip record carries path, reason
+    ("binary" | "too_large" | "extension") and size_bytes. Content-
+    detected skips are listed individually (capped at SKIP_LIST_CAP,
+    overflow aggregated as a count); extension skips appear only as a
+    single aggregate record so a repo full of images cannot balloon the
+    report (issue #36).
+    """
     inventory = []
+    skips: dict[str, dict] = {}
+    extension_skip_count = 0
     for dirpath, dirnames, filenames in os.walk(root):
         dirpath = Path(dirpath)
 
@@ -532,10 +561,41 @@ def build_file_inventory(
                 continue
 
             content = read_text_file(fpath)
-            if content is None:
+            rel = fpath.relative_to(root).as_posix()
+            reason = _classify_skip(fpath, content)
+
+            if reason == "extension":
+                # Predictable and numerous: aggregate, never list (#36).
+                extension_skip_count += 1
                 continue
 
-            rel = fpath.relative_to(root).as_posix()
+            if reason in ("binary", "too_large"):
+                try:
+                    size = fpath.stat().st_size
+                except OSError:
+                    size = 0
+                if len(skips) < SKIP_LIST_CAP:
+                    skips[rel] = {
+                        "path": rel,
+                        "reason": reason,
+                        "size_bytes": size,
+                    }
+                elif not any(s["reason"] == "overflow" for s in skips.values()):
+                    # Cap reached: replace the 51st entry with a single
+                    # count-only marker so the report stays bounded while
+                    # still signaling that more were skipped (#36).
+                    skips[f"... {len(skips) + 1}+ more"] = {
+                        "path": "(beyond cap)",
+                        "reason": "overflow",
+                        "size_bytes": 0,
+                    }
+                if reason == "binary":
+                    # No content at all -- nothing to add to the inventory.
+                    continue
+                # too_large keeps its placeholder text in the pack so the
+                # reader sees why the file body is missing (existing
+                # behavior), while ALSO appearing in the skip summary.
+
             inventory.append(
                 {
                     "path": rel,
@@ -546,7 +606,18 @@ def build_file_inventory(
             )
 
     inventory.sort(key=lambda x: x["path"])
-    return inventory
+    skipped = list(skips.values())
+    skipped.sort(key=lambda x: x["path"])
+    if extension_skip_count:
+        skipped.append(
+            {
+                "path": "(binary by extension, aggregated)",
+                "reason": "extension",
+                "size_bytes": 0,
+                "count": extension_skip_count,
+            }
+        )
+    return inventory, skipped
 
 
 TRUNCATION_MARKER = "\n\n...[TRUNCATED by ctxpack to fit budget]..."
@@ -656,6 +727,7 @@ def generate_markdown(
     root: Path,
     is_incomplete: bool,
     show_absolute_paths: bool = False,
+    skipped: list[dict] | None = None,
 ) -> str:
     """Generate markdown output."""
     included = [i for i in inventory if not i.get("omitted")]
@@ -702,6 +774,28 @@ def generate_markdown(
             )
         lines.append("")
 
+    if skipped:
+        lines.extend(
+            [
+                "## Skipped files",
+                "",
+                "These files could not be included as text content:",
+                "",
+            ]
+        )
+        for item in skipped:
+            if item["reason"] == "extension":
+                lines.append(f"- {item['count']} file(s) skipped by binary extension")
+            elif item["reason"] == "overflow":
+                lines.append(
+                    f"- ...and more skips beyond the {SKIP_LIST_CAP}-entry cap"
+                )
+            else:
+                lines.append(
+                    f"- `{item['path']}` ({item['reason']}, {item['size_bytes']} bytes)"
+                )
+        lines.append("")
+
     return "\n".join(lines)
 
 
@@ -711,6 +805,7 @@ def generate_json(
     budget: int,
     is_incomplete: bool,
     show_absolute_paths: bool = False,
+    skipped: list[dict] | None = None,
 ) -> dict:
     """Generate JSON output."""
     included = [i for i in inventory if not i.get("omitted")]
@@ -721,6 +816,7 @@ def generate_json(
         "is_incomplete": is_incomplete,
         "files_included": len(included),
         "files_omitted": len(inventory) - len(included),
+        "files_skipped": skipped or [],
         "files": [
             {
                 "path": item["path"],
@@ -735,7 +831,12 @@ def generate_json(
     }
 
 
-def print_summary(inventory: list[dict], original_inventory: list[dict], budget: int):
+def print_summary(
+    inventory: list[dict],
+    original_inventory: list[dict],
+    budget: int,
+    skipped: list[dict] | None = None,
+):
     """Print human-readable summary to stdout.
 
     The trimmed inventory retains omitted files as tombstones
@@ -763,6 +864,13 @@ def print_summary(inventory: list[dict], original_inventory: list[dict], budget:
     print(f"Files included:    {len(included)}")
     if omitted_count:
         print(f"Files omitted:     {omitted_count}")
+    if skipped:
+        by_reason: dict[str, int] = {}
+        for item in skipped:
+            count = item.get("count", 1)
+            by_reason[item["reason"]] = by_reason.get(item["reason"], 0) + count
+        breakdown = ", ".join(f"{v} {k}" for k, v in sorted(by_reason.items()))
+        print(f"Files skipped:     {sum(by_reason.values())} ({breakdown})")
     print(f"Total tokens:      {total_tokens:,} / {budget:,} ({pct:.1f}%)")
     print(
         f"Largest file:      {largest['path']} ({largest['tokens_estimate']:,} tokens)"
@@ -917,7 +1025,9 @@ def cmd_pack(args):
     exclude_patterns.append(f"{base_name}.context.json")
 
     print(f"Scanning {root} ...")
-    original_inventory = build_file_inventory(root, include_patterns, exclude_patterns)
+    original_inventory, skipped_files = build_file_inventory(
+        root, include_patterns, exclude_patterns
+    )
     print(f"Found {len(original_inventory)} text files before budget trim.")
 
     inventory, is_incomplete = trim_to_budget(original_inventory, budget)
@@ -938,6 +1048,7 @@ def cmd_pack(args):
             root,
             is_incomplete,
             show_absolute_paths=getattr(args, "show_absolute_paths", False),
+            skipped=skipped_files,
         ),
         encoding="utf-8",
     )
@@ -949,6 +1060,7 @@ def cmd_pack(args):
                 budget,
                 is_incomplete,
                 show_absolute_paths=getattr(args, "show_absolute_paths", False),
+                skipped=skipped_files,
             ),
             indent=2,
         ),
@@ -958,7 +1070,7 @@ def cmd_pack(args):
     print(f"Wrote {md_path}")
     print(f"Wrote {json_path}")
 
-    print_summary(inventory, original_inventory, budget)
+    print_summary(inventory, original_inventory, budget, skipped=skipped_files)
 
 
 def main():
