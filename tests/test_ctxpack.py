@@ -1557,6 +1557,81 @@ class TestSecretSafeDefaults:
         paths = [f["path"] for f in data["files"]]
         assert "fixture.pem" not in paths
 
+    def test_strict_secrets_still_honors_cli_exclude(self, tmp_path):
+        """--strict-secrets must not drop user --exclude patterns (issue #22).
+
+        The strict branch of load_ignore_patterns returned before extending
+        with cli_exclude, so e.g. --strict-secrets --exclude "*.tmp" packed
+        .tmp files.
+        """
+        (tmp_path / "debug.tmp").write_text("scratch data", encoding="utf-8")
+        (tmp_path / "app.py").write_text("print('hi')", encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type(
+                "Args",
+                (),
+                {
+                    "budget": 100000,
+                    "no_config": True,
+                    "include": None,
+                    "exclude": "*.tmp",
+                    "output_dir": None,
+                    "base_name": None,
+                    "strict_secrets": True,
+                },
+            )()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert "debug.tmp" not in paths
+        assert "app.py" in paths
+
+    def test_strict_secrets_cli_negation_cannot_reinclude_secret(self, tmp_path):
+        """Strict mode: CLI negation !*.pem is still beaten by the secret block."""
+        (tmp_path / "fixture.pem").write_text("test key", encoding="utf-8")
+
+        patterns = ctxpack.load_ignore_patterns(tmp_path, ["!*.pem"], True)
+        assert patterns.index("!*.pem") < len(patterns) - 1
+        # The *.pem hard block appears after the user negation.
+        assert len(patterns) - 1 - patterns[::-1].index("*.pem") > patterns.index(
+            "!*.pem"
+        )
+
+    def test_strict_secrets_config_exclude_honored(self, tmp_path):
+        """Config-file exclude entries also survive --strict-secrets."""
+        (tmp_path / "notes.md").write_text("notes", encoding="utf-8")
+        (tmp_path / "keep.py").write_text("print('hi')", encoding="utf-8")
+
+        config_file = tmp_path / ctxpack.DEFAULT_CONFIG_FILE
+        config_file.write_text('{"exclude": ["notes.md"]}', encoding="utf-8")
+
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type(
+                "Args",
+                (),
+                {
+                    "budget": 100000,
+                    "no_config": False,
+                    "include": None,
+                    "exclude": None,
+                    "output_dir": None,
+                    "base_name": None,
+                    "strict_secrets": True,
+                },
+            )()
+            ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text()
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert "notes.md" not in paths
+        assert "keep.py" in paths
+
     def test_without_strict_secrets_negation_still_works(self, tmp_path):
         """Without --strict-secrets, existing negation behavior is unchanged."""
         (tmp_path / "fixture.pem").write_text("test key", encoding="utf-8")
