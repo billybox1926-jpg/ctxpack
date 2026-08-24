@@ -12,6 +12,7 @@ from __future__ import annotations
 __version__ = "1.0.0"
 
 import argparse
+import codecs
 import fnmatch
 import json
 import os
@@ -421,7 +422,7 @@ def estimate_tokens(text: str) -> int:
     return max(1, latin_len // 4 + round(cjk_chars / 1.5))
 
 
-def looks_binary(path: Path, probe_bytes: int = 8192) -> bool:
+def looks_binary_bytes(data: bytes) -> bool:
     """Detect binary content by inspecting bytes, not just the extension.
 
     Extension checks alone let files like .coverage (a SQLite database),
@@ -429,39 +430,76 @@ def looks_binary(path: Path, probe_bytes: int = 8192) -> bool:
     turns them into thousands of replacement characters that consume the
     token budget and crowd out real source.
     """
-    try:
-        with path.open("rb") as f:
-            chunk = f.read(probe_bytes)
-    except OSError:
-        return True
-    if not chunk:
+    if not data:
         return False
-    if b"\x00" in chunk:
+    if b"\x00" in data:
         return True
     # A high proportion of undecodable bytes means this is not text.
     try:
-        chunk.decode("utf-8")
+        data.decode("utf-8")
     except UnicodeDecodeError:
-        decoded = chunk.decode("utf-8", errors="replace")
+        decoded = data.decode("utf-8", errors="replace")
         if decoded.count("\ufffd") / max(1, len(decoded)) > 0.05:
             return True
     return False
 
 
+def looks_binary(path: Path, probe_bytes: int = 8192) -> bool:
+    """Path-based convenience wrapper around looks_binary_bytes()."""
+    try:
+        with path.open("rb") as f:
+            chunk = f.read(probe_bytes)
+    except OSError:
+        return True
+    return looks_binary_bytes(chunk)
+
+
+def _decode_with_bom(data: bytes) -> str | None:
+    """Decode bytes honoring a UTF BOM; None if no recognized BOM.
+
+    Windows toolchains (PowerShell, Visual Studio, some CSV exporters)
+    write text as UTF-16 with a BOM. Plain utf-8 decoding of such files
+    yields ~50% U+FFFD, which looks_binary() rightly treats as binary --
+    so without this sniff those files were silently dropped from the pack
+    (issue #25). Only an explicit BOM changes the encoding decision;
+    guessing at BOM-less encodings is out of scope.
+    """
+    if data.startswith(codecs.BOM_UTF8):
+        return data.decode("utf-8-sig", errors="replace")
+    for bom, encoding in (
+        (codecs.BOM_UTF32_LE, "utf-32-le"),
+        (codecs.BOM_UTF32_BE, "utf-32-be"),
+        (codecs.BOM_UTF16_LE, "utf-16-le"),
+        (codecs.BOM_UTF16_BE, "utf-16-be"),
+    ):
+        # Check the 4-byte BOMs before the 2-byte ones so UTF-32 files are
+        # not misread as UTF-16.
+        if data.startswith(bom):
+            return data[len(bom) :].decode(encoding, errors="replace")
+    return None
+
+
 def read_text_file(path: Path) -> str | None:
-    """Read file as text if not binary and not too large."""
+    """Read file as text if not binary and not too large.
+
+    UTF-8 is assumed unless the file carries a UTF BOM, in which case the
+    BOM's encoding wins (issue #25).
+    """
     if path.suffix.lower() in BINARY_EXTENSIONS:
         return None
     try:
         size = path.stat().st_size
         if size > MAX_FILE_BYTES:
             return f"[File skipped: too large ({size} bytes)]"
-        if looks_binary(path):
-            return None
-        with path.open("r", encoding="utf-8", errors="replace") as f:
-            return f.read()
+        raw = path.read_bytes()
     except OSError as e:
         return f"[Error reading file: {e}]"
+    decoded = _decode_with_bom(raw[:MAX_FILE_BYTES])
+    if decoded is not None:
+        return decoded
+    if looks_binary_bytes(raw):
+        return None
+    return raw.decode("utf-8", errors="replace")
 
 
 def build_file_inventory(

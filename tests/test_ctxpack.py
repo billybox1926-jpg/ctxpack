@@ -3,6 +3,7 @@
 Test suite for ctxpack - dependency-free repo-to-prompt pack builder.
 """
 
+import codecs
 import json
 import re
 
@@ -444,6 +445,49 @@ class TestReadTextFile:
         result = ctxpack.read_text_file(nonexistent)
 
         assert "Error" in result
+
+    def test_read_utf16_bom_file(self, tmp_path):
+        """UTF-16 BOM text files must be read, not silently dropped (#25)."""
+        text = "Get-Process # unicode: caf\u00e9 \u2014 \u65e5\u672c\u8a9e\n"
+        u16le = tmp_path / "script_utf16le.ps1"
+        u16le.write_bytes(codecs.BOM_UTF16_LE + text.encode("utf-16-le"))
+        u16be = tmp_path / "script_utf16be.ps1"
+        u16be.write_bytes(codecs.BOM_UTF16_BE + text.encode("utf-16-be"))
+
+        assert ctxpack.read_text_file(u16le) == text
+        assert ctxpack.read_text_file(u16be) == text
+
+    def test_read_utf8_bom_and_utf32_bom_files(self, tmp_path):
+        """UTF-8-sig and UTF-32 BOM files decode via their BOMs."""
+        text = "exported, csv, row\n" * 10
+        bom8 = tmp_path / "data.csv"
+        bom8.write_bytes(codecs.BOM_UTF8 + text.encode("utf-8"))
+        u32 = tmp_path / "wide.txt"
+        u32.write_bytes(codecs.BOM_UTF32_LE + text.encode("utf-32-le"))
+
+        assert ctxpack.read_text_file(bom8) == text
+        assert ctxpack.read_text_file(u32) == text
+
+    def test_binary_still_dropped(self, tmp_path):
+        """Real binary content stays excluded after the BOM change."""
+        binary = tmp_path / "blob.dat"
+        binary.write_bytes(
+            bytes(range(256)) * 4  # no NUL needed; >5% U+FFFD on utf-8 decode
+        )
+        nul = tmp_path / "nul.dat"
+        nul.write_bytes(b"SQLite format 3\x00" + bytes(range(256)))
+
+        assert ctxpack.looks_binary_bytes(bytes(range(256)) * 4) is True
+        assert ctxpack.read_text_file(binary) is None
+        assert ctxpack.read_text_file(nul) is None
+
+    def test_no_bom_unchanged_utf8_behavior(self, tmp_path):
+        """BOM-less UTF-8 files keep the existing decode path."""
+        content = "# caf\u00e9 \u2014 na\u00efve\nprint('ok')\n"
+        plain = tmp_path / "main.py"
+        plain.write_bytes(content.encode("utf-8"))
+
+        assert ctxpack.read_text_file(plain) == content
 
 
 class TestBuildFileInventory:
