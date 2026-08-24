@@ -2304,3 +2304,61 @@ class TestTokenBudgetBoundaries:
         assert result[0].get("truncated") is True
         assert result[1].get("omitted") is True
         assert result[2].get("omitted") is True
+
+    def test_print_summary_excludes_omitted_files(self, capsys):
+        """Files included must count only non-omitted entries (issue #21).
+
+        The trimmed inventory keeps omitted files as tombstones so paths
+        are never silently dropped; print_summary previously counted them.
+        """
+        inventory = [
+            {
+                "path": "a.txt",
+                "size_bytes": 2400,
+                "tokens_estimate": 600,
+                "content": "a" * 2400,
+            },
+            {
+                "path": "b.txt",
+                "size_bytes": 2400,
+                "tokens_estimate": 600,
+                "content": "b" * 2400,
+            },
+            {
+                "path": "c.txt",
+                "size_bytes": 2400,
+                "tokens_estimate": 600,
+                "content": "c" * 2400,
+            },
+        ]
+        trimmed, is_incomplete = ctxpack.trim_to_budget(inventory, 1000)
+        assert is_incomplete is True
+
+        ctxpack.print_summary(trimmed, inventory, 1000)
+        out = capsys.readouterr().out
+
+        omitted = sum(1 for item in trimmed if item.get("omitted"))
+        included = len(trimmed) - omitted
+        assert included < len(trimmed)  # precondition: tombstones exist
+        included_line = next(
+            line for line in out.splitlines() if line.startswith("Files included:")
+        )
+        assert str(included) in included_line
+        # Parity with md/json outputs: report the omitted count too.
+        if omitted:
+            assert f"Files omitted:     {omitted}" in out
+
+    def test_print_summary_no_omitted_line_when_all_fit(self, capsys):
+        """No 'Files omitted' line when nothing was left out."""
+        inventory = [
+            {
+                "path": "a.txt",
+                "size_bytes": 100,
+                "tokens_estimate": 25,
+                "content": "a" * 100,
+            }
+        ]
+        ctxpack.print_summary(inventory, inventory, 1000)
+        out = capsys.readouterr().out
+        assert "Files included:    1" in out
+        assert "Files omitted:" not in out
