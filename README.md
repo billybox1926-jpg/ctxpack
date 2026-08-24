@@ -1,5 +1,13 @@
 # ctxpack
 
+![ctxpack icon](assets/icon.png)
+
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/billybox1926-jpg/ctxpack/releases)
+[![Tests](https://github.com/billybox1926-jpg/ctxpack/actions/workflows/test.yml/badge.svg)](https://github.com/billybox1926-jpg/ctxpack/actions/workflows/test.yml)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+
 **Dependency-free repo-to-prompt pack builder.**
 
 `ctxpack` is the missing bridge between raw repository scanning and AI-ready context. It takes a local project, respects ignore rules, token-budgets the output, and emits two clean artifacts:
