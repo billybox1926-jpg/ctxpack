@@ -2304,3 +2304,46 @@ class TestTokenBudgetBoundaries:
         assert result[0].get("truncated") is True
         assert result[1].get("omitted") is True
         assert result[2].get("omitted") is True
+
+    def test_cjk_truncation_respects_budget(self):
+        """CJK content truncated to fit must not exceed the token budget.
+
+        Regression for issue #20: the old code sliced remaining*4 chars
+        assuming ~4 chars/token, but estimate_tokens() bills pure CJK at
+        ~1.5 chars/token, so a CJK file emitted up to ~2.7x its slice of
+        the budget.
+        """
+        cjk = "漢字テスト" * 2000  # ~6667 estimated tokens
+        inventory = [
+            {
+                "path": "c.txt",
+                "size_bytes": 30000,
+                "tokens_estimate": ctxpack.estimate_tokens(cjk),
+                "content": cjk,
+            }
+        ]
+
+        result, is_incomplete = ctxpack.trim_to_budget(inventory, 100)
+
+        assert is_incomplete is True
+        assert result[0].get("truncated") is True
+        total = sum(item["tokens_estimate"] for item in result)
+        assert total <= 100
+        # Sanity: it actually kept most of the budget rather than omitting.
+        assert total >= 80
+
+    def test_mixed_script_truncation_respects_budget(self):
+        """Mixed Latin/CJK truncation must also stay within budget."""
+        mixed = ("code_line = 'value'  # コメント\n" * 500) + ("漢字のテキスト" * 1000)
+        inventory = [
+            {
+                "path": "m.py",
+                "size_bytes": len(mixed.encode()),
+                "tokens_estimate": ctxpack.estimate_tokens(mixed),
+                "content": mixed,
+            }
+        ]
+        result, _ = ctxpack.trim_to_budget(inventory, 250)
+        assert result[0].get("truncated") is True
+        total = sum(item["tokens_estimate"] for item in result)
+        assert total <= 250
