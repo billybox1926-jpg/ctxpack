@@ -446,6 +446,111 @@ class TestReadTextFile:
 
         assert "Error" in result
 
+    def _pack_tree(self, tmp_path, budget=100000):
+        """Run cmd_pack in tmp_path; return (json_data, md_text, stdout)."""
+        with patch.object(Path, "cwd", return_value=tmp_path):
+            args = type(
+                "Args",
+                (),
+                {
+                    "budget": budget,
+                    "no_config": True,
+                    "include": None,
+                    "exclude": None,
+                    "output_dir": None,
+                    "base_name": None,
+                    "strict_secrets": False,
+                },
+            )()
+            ctxpack.cmd_pack(args)
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        md = (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.md")).read_text(
+            encoding="utf-8"
+        )
+        return data, md
+
+    def test_skip_summary_reports_binary_and_oversize(self, tmp_path, capsys):
+        """Content-detected skips are listed with path+reason everywhere (#36)."""
+        (tmp_path / "app.py").write_text("print('hi')", encoding="utf-8")
+        (tmp_path / "blob.blob").write_bytes(b"SQLite format 3\x00" + bytes(range(256)))
+        (tmp_path / "huge.txt").write_text("x" * (ctxpack.MAX_FILE_BYTES + 1))
+
+        data, md = self._pack_tree(tmp_path)
+
+        skipped = {s["path"]: s for s in data["files_skipped"]}
+        assert skipped["blob.blob"]["reason"] == "binary"
+        assert skipped["blob.blob"]["size_bytes"] > 0
+        assert skipped["huge.txt"]["reason"] == "too_large"
+
+        assert "## Skipped files" in md
+        assert "`blob.blob` (binary," in md
+        assert "`huge.txt` (too_large," in md
+
+        out = capsys.readouterr().out
+        line = next(x for x in out.splitlines() if x.startswith("Files skipped:"))
+        assert "1 binary" in line
+        assert "1 too_large" in line
+
+    def test_skip_summary_aggregates_extension_skips(self, tmp_path, capsys):
+        """Extension skips appear as one aggregate record, not per-file (#36)."""
+        (tmp_path / "app.py").write_text("print('hi')", encoding="utf-8")
+        for i in range(3):
+            (tmp_path / f"img{i}.png").write_bytes(b"\x89PNG fake")
+
+        data, md = self._pack_tree(tmp_path)
+
+        ext = [s for s in data["files_skipped"] if s["reason"] == "extension"]
+        assert len(ext) == 1 and ext[0]["count"] == 3
+        assert not any(s["path"].endswith(".png") for s in data["files_skipped"])
+
+        assert "3 file(s) skipped by binary extension" in md
+        out = capsys.readouterr().out
+        assert "3 extension" in out
+
+    def test_no_skips_output_unchanged(self, tmp_path, capsys):
+        """Zero-skip trees: no Skipped section, empty files_skipped, no line."""
+        (tmp_path / "app.py").write_text("print('hi')", encoding="utf-8")
+
+        data, md = self._pack_tree(tmp_path)
+
+        assert data["files_skipped"] == []
+        assert "## Skipped files" not in md
+        assert "Files skipped:" not in capsys.readouterr().out
+
+    def test_skip_list_cap_overflows_to_marker(self):
+        """More than SKIP_LIST_CAP content-skips collapse to a count marker."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for i in range(ctxpack.SKIP_LIST_CAP + 5):
+                (root / f"b{i}.blob").write_bytes(b"\x00\x01\x02binary")
+            inventory, skipped = ctxpack.build_file_inventory(root, [], [])
+            assert inventory == []
+            markers = [s for s in skipped if s["reason"] == "overflow"]
+            # 50 real entries + 1 overflow marker: the cap applies to real
+            # entries; the marker rides along so overflow stays visible.
+            assert len(skipped) == ctxpack.SKIP_LIST_CAP + 1
+            assert len(markers) == 1
+
+    def test_classify_skip_reasons(self, tmp_path):
+        """Unit: reason mapping for each skip class."""
+        ext_file = tmp_path / "x.png"
+        bin_file = tmp_path / "y.dat"
+        big_file = tmp_path / "z.txt"
+        ok_file = tmp_path / "w.py"
+        big_file.write_text("x" * (ctxpack.MAX_FILE_BYTES + 1))
+
+        assert ctxpack._classify_skip(ext_file, None) == "extension"
+        assert ctxpack._classify_skip(bin_file, None) == "binary"
+        content = ctxpack.read_text_file(big_file)
+        assert ctxpack._classify_skip(big_file, content) == "too_large"
+        assert ctxpack._classify_skip(ok_file, "print(1)") is None
+
     def test_read_utf16_bom_file(self, tmp_path):
         """UTF-16 BOM text files must be read, not silently dropped (#25)."""
         text = "Get-Process # unicode: caf\u00e9 \u2014 \u65e5\u672c\u8a9e\n"
@@ -503,7 +608,7 @@ class TestBuildFileInventory:
         (subdir / "file3.md").write_text("# Header")
 
         patterns = []
-        inventory = ctxpack.build_file_inventory(tmp_path, [], patterns)
+        inventory, _skipped = ctxpack.build_file_inventory(tmp_path, [], patterns)
 
         assert len(inventory) == 3
         paths = [item["path"] for item in inventory]
@@ -517,7 +622,7 @@ class TestBuildFileInventory:
         (tmp_path / "bad.log").write_text("bad")
 
         patterns = ["*.log"]
-        inventory = ctxpack.build_file_inventory(tmp_path, [], patterns)
+        inventory, _skipped = ctxpack.build_file_inventory(tmp_path, [], patterns)
 
         assert len(inventory) == 1
         assert inventory[0]["path"] == "good.txt"
@@ -528,7 +633,7 @@ class TestBuildFileInventory:
         (tmp_path / "image.png").write_bytes(b"\x89PNG")
 
         patterns = []
-        inventory = ctxpack.build_file_inventory(tmp_path, [], patterns)
+        inventory, _skipped = ctxpack.build_file_inventory(tmp_path, [], patterns)
 
         assert len(inventory) == 1
         assert inventory[0]["path"] == "text.txt"
@@ -540,7 +645,7 @@ class TestBuildFileInventory:
         (tmp_path / "m.txt").write_text("m")
 
         patterns = []
-        inventory = ctxpack.build_file_inventory(tmp_path, [], patterns)
+        inventory, _skipped = ctxpack.build_file_inventory(tmp_path, [], patterns)
 
         paths = [item["path"] for item in inventory]
         assert paths == ["a.txt", "m.txt", "z.txt"]
@@ -552,7 +657,7 @@ class TestBuildFileInventory:
         test_file.write_text(content)
 
         patterns = []
-        inventory = ctxpack.build_file_inventory(tmp_path, [], patterns)
+        inventory, _skipped = ctxpack.build_file_inventory(tmp_path, [], patterns)
 
         assert len(inventory) == 1
         item = inventory[0]
@@ -580,7 +685,7 @@ class TestSymlinkTraversal:
         except OSError:
             pytest.skip("cannot create symlinks on this platform")
 
-        inventory = ctxpack.build_file_inventory(repo, [], [])
+        inventory, _skipped = ctxpack.build_file_inventory(repo, [], [])
         paths = [item["path"] for item in inventory]
 
         assert paths == ["normal.txt"]
@@ -595,7 +700,7 @@ class TestSymlinkTraversal:
         except OSError:
             pytest.skip("cannot create symlinks on this platform")
 
-        inventory = ctxpack.build_file_inventory(repo, [], [])
+        inventory, _skipped = ctxpack.build_file_inventory(repo, [], [])
         paths = [item["path"] for item in inventory]
         assert paths == ["alias.txt", "real.txt"]
 
