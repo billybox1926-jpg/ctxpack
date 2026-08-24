@@ -2334,9 +2334,7 @@ class TestTokenBudgetBoundaries:
 
     def test_mixed_script_truncation_respects_budget(self):
         """Mixed Latin/CJK truncation must also stay within budget."""
-        mixed = ("code_line = 'value'  # コメント\n" * 500) + (
-            "漢字のテキスト" * 1000
-        )
+        mixed = ("code_line = 'value'  # コメント\n" * 500) + ("漢字のテキスト" * 1000)
         inventory = [
             {
                 "path": "m.py",
