@@ -174,6 +174,12 @@ def load_ignore_patterns(
                     patterns.append(line)
 
     if strict_secrets:
+        # User excludes still apply in strict mode: in default mode CLI
+        # excludes only EXTEND the defaults, so honoring them here cannot
+        # weaken the secret block -- it is appended after them and wins by
+        # last-match-wins. Dropping them (the old behavior) silently packed
+        # files the user asked to exclude, e.g. --exclude "*.log".
+        patterns.extend(cli_exclude)
         # Append the secret block LAST so its exclusions win over any
         # negation the user config or CLI introduced. The built-in
         # !.env.example carve-out inside secret_patterns is re-stated after
