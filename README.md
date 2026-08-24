@@ -4,7 +4,8 @@
 
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/billybox1926-jpg/ctxpack/releases)
+[![PyPI](https://img.shields.io/pypi/v/ctxpack-cli.svg?style=flat)](https://pypi.org/project/ctxpack-cli/)
+[![Python versions](https://img.shields.io/pypi/pyversions/ctxpack-cli.svg?style=flat)](https://pypi.org/project/ctxpack-cli/)
 [![Tests](https://github.com/billybox1926-jpg/ctxpack/actions/workflows/test.yml/badge.svg)](https://github.com/billybox1926-jpg/ctxpack/actions/workflows/test.yml)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
