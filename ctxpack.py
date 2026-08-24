@@ -677,7 +677,15 @@ def generate_json(
 
 
 def print_summary(inventory: list[dict], original_inventory: list[dict], budget: int):
-    """Print human-readable summary to stdout."""
+    """Print human-readable summary to stdout.
+
+    The trimmed inventory retains omitted files as tombstones
+    (omitted=True, empty content) so paths are never silently dropped.
+    Count only non-omitted entries here to match the "Files included"
+    header in generate_markdown and files_included in generate_json.
+    """
+    included = [i for i in inventory if not i.get("omitted")]
+    omitted_count = len(inventory) - len(included)
     total_tokens = sum(item["tokens_estimate"] for item in inventory)
     original_tokens = sum(item["tokens_estimate"] for item in original_inventory)
     truncated_count = sum(1 for item in inventory if item.get("truncated"))
@@ -693,7 +701,9 @@ def print_summary(inventory: list[dict], original_inventory: list[dict], budget:
     print("\n" + "=" * 40)
     print(" ctxpack Summary")
     print("=" * 40)
-    print(f"Files included:    {len(inventory)}")
+    print(f"Files included:    {len(included)}")
+    if omitted_count:
+        print(f"Files omitted:     {omitted_count}")
     print(f"Total tokens:      {total_tokens:,} / {budget:,} ({pct:.1f}%)")
     print(
         f"Largest file:      {largest['path']} ({largest['tokens_estimate']:,} tokens)"
