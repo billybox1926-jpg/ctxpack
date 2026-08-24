@@ -1607,9 +1607,7 @@ class TestSecretSafeDefaults:
         (tmp_path / "keep.py").write_text("print('hi')", encoding="utf-8")
 
         config_file = tmp_path / ctxpack.DEFAULT_CONFIG_FILE
-        config_file.write_text(
-            '{"exclude": ["notes.md"]}', encoding="utf-8"
-        )
+        config_file.write_text('{"exclude": ["notes.md"]}', encoding="utf-8")
 
         with patch.object(Path, "cwd", return_value=tmp_path):
             args = type(
