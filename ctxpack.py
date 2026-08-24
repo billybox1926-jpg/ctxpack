@@ -857,6 +857,12 @@ def cmd_pack(args):
         root, cli_exclude, strict_secrets=getattr(args, "strict_secrets", False)
     )
 
+    # Never re-pack our own previous output: the defaults only cover
+    # ctxpack.context.*, so a custom base_name's outputs would be scanned as
+    # source on the next run and compound each time (issue #23).
+    exclude_patterns.append(f"{base_name}.context.md")
+    exclude_patterns.append(f"{base_name}.context.json")
+
     print(f"Scanning {root} ...")
     original_inventory = build_file_inventory(root, include_patterns, exclude_patterns)
     print(f"Found {len(original_inventory)} text files before budget trim.")
