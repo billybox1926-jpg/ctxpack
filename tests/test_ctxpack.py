@@ -4,6 +4,7 @@ Test suite for ctxpack - dependency-free repo-to-prompt pack builder.
 """
 
 import json
+import re
 
 # Import the module under test
 import sys
@@ -686,6 +687,65 @@ class TestGenerateMarkdown:
         md = ctxpack.generate_markdown(inventory, tmp_path, False)
 
         assert "⚠️ Truncated to fit token budget" in md
+
+    def test_markdown_nested_fence_round_trips(self, tmp_path):
+        """Content containing ``` fences must not break the pack fence.
+
+        A fixed ``` fence is terminated by any content line starting with
+        ```, so the rest of the file rendered as raw markdown (issue #24).
+        The fence must be longer than any backtick run in the content.
+        """
+        nested = (
+            "# Docs\n\n```python\nprint('nested')\n```\n\nAfter the nested block.\n"
+        )
+        inventory = [
+            {
+                "path": "README.md",
+                "size_bytes": len(nested.encode()),
+                "tokens_estimate": ctxpack.estimate_tokens(nested),
+                "content": nested,
+            }
+        ]
+
+        md = ctxpack.generate_markdown(inventory, tmp_path, False)
+
+        # CommonMark semantics: the opening fence is a run of N>=3 backticks
+        # followed by an info string; it closes only on a line of >= N
+        # backticks. Find the pack's opening fence and its true closer.
+        md_lines = md.splitlines()
+        openings = [ln for ln in md_lines if re.fullmatch(r"`{3,}text", ln)]
+        assert len(openings) == 1
+        opening = openings[0]
+        n = len(opening) - len("text")
+
+        closers = [ln for ln in md_lines if re.fullmatch(r"`{%d,}" % n, ln)]
+        assert len(closers) == 1
+
+        longest_run = max(len(m.group()) for m in re.finditer(r"`+", nested))
+        assert n > longest_run
+
+        # Round-trip: the full content appears verbatim between the fences
+        # (allowing the single newline generate_markdown inserts before the
+        # closing fence line).
+        body_start = md.index(opening) + len(opening)
+        body_end = md.index(closers[0], body_start)
+        extracted = md[body_start:body_end].lstrip("\n")
+        if extracted.endswith("\n") and not nested.endswith(extracted[-2:]):
+            extracted = extracted[:-1]
+        assert extracted == nested
+
+    def test_markdown_plain_content_keeps_standard_fence(self, tmp_path):
+        """No backticks in content -> ordinary ``` fence (unchanged output)."""
+        inventory = [
+            {
+                "path": "plain.txt",
+                "size_bytes": 11,
+                "tokens_estimate": 2,
+                "content": "Hello World",
+            }
+        ]
+        md = ctxpack.generate_markdown(inventory, tmp_path, False)
+        assert "```text" in md
 
 
 class TestGenerateJson:
