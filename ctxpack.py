@@ -599,6 +599,20 @@ def trim_to_budget(
     return result, is_incomplete
 
 
+def _fence_for(content: str) -> str:
+    """Return a backtick fence that cannot appear inside content.
+
+    CommonMark closes a fence only on a run of backticks at least as long
+    as the opening fence, so picking one more than the longest backtick
+    run in the content guarantees the file body can never terminate it --
+    including lines like `` ```python `` inside markdown files (issue #24).
+    """
+    longest = 0
+    for match in re.finditer(r"`+", content):
+        longest = max(longest, len(match.group()))
+    return "`" * max(3, longest + 1)
+
+
 def generate_markdown(
     inventory: list[dict],
     root: Path,
@@ -630,7 +644,8 @@ def generate_markdown(
         )
         if item.get("truncated"):
             lines.append("*⚠️ Truncated to fit token budget*")
-        lines.extend(["", "```text", item["content"], "```", ""])
+        fence = _fence_for(item["content"])
+        lines.extend(["", f"{fence}text", item["content"], fence, ""])
 
     if omitted:
         # List omitted paths so the reader knows what is missing from the pack.
