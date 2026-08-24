@@ -1632,6 +1632,72 @@ class TestSecretSafeDefaults:
         assert "notes.md" not in paths
         assert "keep.py" in paths
 
+    def test_custom_base_name_output_not_repacked(self, tmp_path):
+        """A second run with a custom base_name must not pack its own output.
+
+        The defaults only ignore ctxpack.context.*; a custom base_name's
+        mypack.context.md/json were previously scanned as source and
+        compounded on every run (issue #23).
+        """
+        (tmp_path / "app.py").write_text("print('hi')", encoding="utf-8")
+
+        def _pack():
+            with patch.object(Path, "cwd", return_value=tmp_path):
+                args = type(
+                    "Args",
+                    (),
+                    {
+                        "budget": 100000,
+                        "no_config": True,
+                        "include": None,
+                        "exclude": None,
+                        "output_dir": None,
+                        "base_name": "mypack",
+                        "strict_secrets": False,
+                    },
+                )()
+                ctxpack.cmd_pack(args)
+
+        _pack()
+        assert (tmp_path / "mypack.context.json").exists()
+
+        _pack()
+        data = json.loads(
+            (tmp_path / "mypack.context.json").read_text(encoding="utf-8")
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert paths == ["app.py"]
+        assert not any(".context." in p for p in paths)
+
+    def test_default_base_name_still_not_repacked(self, tmp_path):
+        """Default outputs stay excluded on re-runs (existing behavior)."""
+        (tmp_path / "app.py").write_text("print('hi')", encoding="utf-8")
+
+        for _ in range(2):
+            with patch.object(Path, "cwd", return_value=tmp_path):
+                args = type(
+                    "Args",
+                    (),
+                    {
+                        "budget": 100000,
+                        "no_config": True,
+                        "include": None,
+                        "exclude": None,
+                        "output_dir": None,
+                        "base_name": None,
+                        "strict_secrets": False,
+                    },
+                )()
+                ctxpack.cmd_pack(args)
+
+        data = json.loads(
+            (tmp_path / (ctxpack.DEFAULT_BASE_NAME + ".context.json")).read_text(
+                encoding="utf-8"
+            )
+        )
+        paths = [f["path"] for f in data["files"]]
+        assert paths == ["app.py"]
+
     def test_without_strict_secrets_negation_still_works(self, tmp_path):
         """Without --strict-secrets, existing negation behavior is unchanged."""
         (tmp_path / "fixture.pem").write_text("test key", encoding="utf-8")
